@@ -43,6 +43,20 @@
   --shadow:     0 4px 16px -4px rgba(15, 23, 42, .12), 0 2px 6px -2px rgba(15, 23, 42, .06);
   --shadow-lg:  0 24px 48px -16px rgba(15, 23, 42, .28);
 
+  /* Grafik renkleri — doğrulanmış kategorik palet (açık tema adımları).
+     validate_palette.js: lightness/chroma/CVD/normal-görüş kontrolleri geçer.
+     Açık temada aqua, sarı ve magenta 3:1 kontrastın altındadır; bu yüzden
+     her grafik görünür etiket ve gösterge ile birlikte gelir. */
+  --series-1: #2a78d6;   /* mavi   */
+  --series-2: #eb6834;   /* turuncu */
+  --series-3: #1baf7a;   /* deniz  */
+  --series-4: #eda100;   /* sarı   */
+  --series-5: #e87ba4;   /* magenta */
+  --viz-track: #cde2fb;  /* ölçer yolu: aynı mavi rampanın açık adımı */
+  --viz-grid:  #e6ebf1;
+  --viz-high:  #b45309;  /* durum: dolmak üzere */
+  --viz-full:  #b91c1c;  /* durum: dolu */
+
   --sidebar-w:  260px;
   --topbar-h:   68px;
   --font: "Segoe UI", system-ui, -apple-system, "Inter", "Helvetica Neue", Arial, sans-serif;
@@ -80,6 +94,18 @@
   --sidebar-bg:    #081019;
   --sidebar-text:  #91a8bb;
   --sidebar-line:  rgba(255, 255, 255, .07);
+
+  /* Koyu tema: aynı sekiz renk, koyu yüzey için yeniden adımlanmış —
+     otomatik çevirme değil, ayrıca doğrulanmış bir set. */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --viz-track: #184f95;
+  --viz-grid:  #24384b;
+  --viz-high:  #c98500;
+  --viz-full:  #e66767;
 
   --shadow-sm:  0 1px 2px rgba(0, 0, 0, .4);
   --shadow:     0 4px 18px -4px rgba(0, 0, 0, .55);
@@ -350,13 +376,13 @@ table.data th {
   position: sticky; top: 0; z-index: 1;
   background: var(--surface-2); text-align: left; font-weight: 650; font-size: 12px;
   text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted);
-  padding: 11px 14px; border-bottom: 1px solid var(--border); white-space: nowrap;
+  padding: 10px 11px; border-bottom: 1px solid var(--border); white-space: nowrap;
 }
 table.data th.sortable { cursor: pointer; user-select: none; }
 table.data th.sortable:hover { color: var(--text); }
 table.data th .sort-mark { opacity: .45; margin-left: 4px; }
 table.data td {
-  padding: 11px 14px; border-bottom: 1px solid var(--border);
+  padding: 10px 11px; border-bottom: 1px solid var(--border);
   vertical-align: middle; color: var(--text-soft);
 }
 table.data tbody tr:hover td { background: var(--surface-2); }
@@ -380,7 +406,13 @@ table.data td.num { text-align: right; font-variant-numeric: tabular-nums;
                     color: var(--text); font-weight: 550; }
 table.data td.mono { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); }
 table.data td.strong { color: var(--text); font-weight: 600; }
-table.data .row-actions { display: flex; gap: 4px; justify-content: flex-end; }
+table.data .row-actions { display: flex; gap: 2px; justify-content: flex-end; }
+table.data .row-actions .icon-btn { width: 28px; height: 28px; }
+table.data .row-actions svg { width: 16px; height: 16px; }
+table.data td.gtip-cell { max-width: 168px; }
+table.data td.gtip-cell .clip-line {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 158px;
+}
 table.data tfoot td { font-weight: 650; color: var(--text); background: var(--surface-2); }
 
 .toolbar {
@@ -529,6 +561,33 @@ select.input { cursor: pointer; appearance: none;
 
 .progress { height: 7px; background: var(--surface-3); border-radius: 20px; overflow: hidden; }
 .progress__bar { height: 100%; background: var(--primary); transition: width .25s ease; }
+
+/* ---------------------------- grafikler ---------------------------- */
+.viz { position: relative; }
+.viz svg { display: block; width: 100%; overflow: visible; }
+.viz svg text { font-family: var(--font); }
+
+.viz-tip {
+  position: absolute; z-index: 5; pointer-events: none;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow); padding: 8px 11px; font-size: 12.5px;
+  line-height: 1.5; white-space: nowrap; max-width: 260px;
+}
+.viz-tip b { font-weight: 650; }
+.viz-tip__sub { color: var(--text-muted); font-size: 11px; }
+
+.viz-legend {
+  display: flex; flex-wrap: wrap; gap: 8px 18px;
+  padding: 12px 0 2px; font-size: 12px; color: var(--text-soft);
+}
+.viz-legend__item { display: inline-flex; align-items: center; gap: 7px; }
+.viz-legend__swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+
+.viz-empty {
+  padding: 34px 16px; text-align: center;
+  color: var(--text-muted); font-size: 12.5px;
+}
 
 .list-plain { list-style: none; padding: 0; margin: 0; }
 .list-plain li {

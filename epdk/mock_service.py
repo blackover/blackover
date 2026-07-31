@@ -113,26 +113,32 @@ class Store:
     def _seed(self) -> None:
         today = date.today()
         now = datetime.now().replace(minute=0, second=0, microsecond=0)
-        self.tables["tablodep1"] = [
-            {
-                "id": str(uuid.uuid4()).upper(),
-                "kullanici": DEMO_USER,
-                "islemZamani": (now - timedelta(hours=hours - 1)).isoformat(timespec="seconds"),
-                "saat": (now - timedelta(hours=hours)).isoformat(timespec="seconds"),
-                "tankNumarasi": tank,
-                "petrolTuruGTIPNo": gtip,
-                "tankStokM3": m3,
-                "tankStokTon": round(m3 * density / 1000, 3),
-                "tankIciSicaklik": temperature,
-                "petrolTuruYogunluk": density,
-            }
-            for hours, tank, gtip, m3, density, temperature in [
-                (1, "T1", "2710.19.43.00.11", 842.5, 835.0, 18.4),
-                (2, "T1", "2710.19.43.00.11", 851.0, 835.0, 18.1),
-                (1, "T101", "2710.19.67.00.31", 4120.75, 968.1, 42.0),
-                (3, "T2", "2710.12.31.00.00", 610.25, 745.5, 21.7),
-            ]
+        # Son 12 saatlik yarım saatlik seri — panel grafiklerinin gerçekçi
+        # görünmesi için birkaç tank üzerinde küçük dalgalanmalarla üretilir.
+        profiles = [
+            ("T1", "2710.19.43.00.11", 851.0, 835.0, 18.4, -7.5),
+            ("T101", "2710.19.67.00.31", 4380.0, 968.1, 42.0, -22.0),
+            ("T2", "2710.12.31.00.00", 590.0, 745.5, 21.7, 4.5),
         ]
+        readings = []
+        for tank, gtip, start_m3, density, temperature, drift in profiles:
+            for step in range(12, -1, -1):
+                moment = now - timedelta(minutes=30 * step)
+                m3 = round(start_m3 + drift * (12 - step)
+                           + (7.5 if step % 3 == 0 else -4.25), 3)
+                readings.append({
+                    "id": str(uuid.uuid4()).upper(),
+                    "kullanici": DEMO_USER,
+                    "islemZamani": (moment + timedelta(minutes=6)).isoformat(timespec="seconds"),
+                    "saat": moment.isoformat(timespec="seconds"),
+                    "tankNumarasi": tank,
+                    "petrolTuruGTIPNo": gtip,
+                    "tankStokM3": m3,
+                    "tankStokTon": round(m3 * density / 1000, 3),
+                    "tankIciSicaklik": round(temperature + (step % 4) * 0.3, 3),
+                    "petrolTuruYogunluk": density,
+                })
+        self.tables["tablodep1"] = readings
         self.tables["tablodep2"] = [
             {
                 "id": str(uuid.uuid4()).upper(),

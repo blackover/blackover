@@ -1,14 +1,15 @@
 /* Sayfa görünümleri: panel, tablolar, referans listeler, geçmiş, ayarlar. */
 
 import { api } from './api.js';
+import { groupedBarChart, legendHtml, tankFillChart, trendChart } from './charts.js';
 import { openRecordForm } from './form.js';
 import { pick, t, getLanguage } from './i18n.js';
 import { openImporter } from './importer.js';
 import { ensureLookups, gtipName, gumrukLabel, state, tableSpec } from './state.js';
 import {
   confirmDialog, copyText, download, emptyHtml, errorHtml, escapeHtml,
-  filterRows, fmtDate, fmtDateTime, fmtNumber, icon, loadingHtml, openModal,
-  relativeTime, sortRows, toast, toCsv,
+  filterRows, fmtDate, fmtDateTime, fmtDateTimeShort, fmtNumber, icon, isoDate,
+  loadingHtml, openModal, relativeTime, sortRows, toast, toCsv,
 } from './ui.js';
 
 const view = () => document.getElementById('view');
@@ -70,6 +71,44 @@ export async function renderDashboard(ctx) {
         <div class="card">
           <div class="card__head">
             <div>
+              <h2 class="card__title">${escapeHtml(t('dash.tankFill'))}</h2>
+              <p class="card__sub">${escapeHtml(t('dash.tankFillSub'))}</p>
+            </div>
+          </div>
+          <div class="card__body"><div class="viz" id="chart-tanks"></div></div>
+        </div>
+
+        <div class="card">
+          <div class="card__head">
+            <div>
+              <h2 class="card__title">${escapeHtml(t('dash.byProduct'))}</h2>
+              <p class="card__sub">${escapeHtml(t('dash.byProductSub'))}</p>
+            </div>
+          </div>
+          <div class="card__body">
+            <div class="viz" id="chart-products"></div>
+            <div id="legend-products"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__head">
+          <div>
+            <h2 class="card__title">${escapeHtml(t('dash.trend'))}</h2>
+            <p class="card__sub">${escapeHtml(t('dash.trendSub'))}</p>
+          </div>
+        </div>
+        <div class="card__body">
+          <div class="viz" id="chart-trend"></div>
+          <div id="legend-trend"></div>
+        </div>
+      </div>
+
+      <div class="grid grid--2">
+        <div class="card">
+          <div class="card__head">
+            <div>
               <h2 class="card__title">${escapeHtml(t('dash.recentActivity'))}</h2>
               <p class="card__sub">${escapeHtml(t('log.subtitle'))}</p>
             </div>
@@ -117,6 +156,8 @@ export async function renderDashboard(ctx) {
       </div>
     </div>`;
 
+  drawCharts(payload);
+
   view().querySelectorAll('[data-go]').forEach((button) =>
     button.addEventListener('click', () => ctx.navigate(button.dataset.go)));
   view().querySelectorAll('[data-go-page]').forEach((button) =>
@@ -130,6 +171,148 @@ export async function renderDashboard(ctx) {
       });
     }));
 }
+
+/* ------------------------------------------------------- panel grafikleri */
+
+let lastDashboard = null;
+
+const num = (value) => {
+  const parsed = Number(String(value ?? '').replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+/** Her tank için en son DEP-1 bildirimi (kapasiteye göre doluluk). */
+function buildTankFill(payload) {
+  const rows = payload.summary?.dep1?.rows || [];
+  const latest = new Map();
+  rows.forEach((row) => {
+    const key = String(row.tankNumarasi ?? '');
+    const stamp = String(row.saat ?? '');
+    if (!latest.has(key) || stamp > latest.get(key).saat) latest.set(key, row);
+  });
+
+  return (payload.tanks || [])
+    .map((tank) => {
+      const row = latest.get(String(tank.tankNo ?? ''));
+      return {
+        tankNo: tank.tankNo,
+        capacity: num(tank.kapasiteM3),
+        stock: row ? num(row.tankStokM3) : 0,
+        fuel: tank.yakitTuru,
+        product: row ? (gtipName(row.petrolTuruGTIPNo) || tank.yakitTuru) : tank.yakitTuru,
+        reportedAt: row ? fmtDateTime(row.saat) : t('dash.noTankData'),
+      };
+    })
+    .sort((a, b) => b.capacity - a.capacity);
+}
+
+/** Tank başına son 24 saatlik stok serisi (en çok stoklu 5 tank). */
+function buildTrend(payload) {
+  const rows = payload.summary?.dep1?.rows || [];
+  const byTank = new Map();
+
+  rows.forEach((row) => {
+    const time = new Date(String(row.saat ?? '').replace(' ', 'T')).getTime();
+    if (!Number.isFinite(time)) return;
+    const key = String(row.tankNumarasi ?? '—');
+    if (!byTank.has(key)) byTank.set(key, new Map());
+    // Aynı tank+saat için birden çok ürün varsa toplanır
+    const points = byTank.get(key);
+    points.set(time, (points.get(time) || 0) + num(row.tankStokTon));
+  });
+
+  const series = [...byTank.entries()]
+    .map(([name, points]) => ({
+      name,
+      points: [...points.entries()].map(([time, value]) => ({ t: time, v: value })),
+    }))
+    .filter((s) => s.points.length >= 2)
+    .sort((a, b) => Math.max(...b.points.map((p) => p.v)) - Math.max(...a.points.map((p) => p.v)));
+
+  // Kategorik renk tavanı: en çok 5 seri, gerisi gösterilmez ve bu belirtilir
+  return { series: series.slice(0, 5), hidden: Math.max(0, series.length - 5) };
+}
+
+/** Bugünkü DEP-2 (verilen) ve DR (alınan) stoklarının ürün bazında toplamı. */
+function buildByProduct(payload) {
+  const today = isoDate(0);
+  const totals = new Map();
+
+  const collect = (rows, slot) => {
+    (rows || []).forEach((row) => {
+      if (String(row.tarih ?? '').slice(0, 10) !== today) return;
+      const code = String(row.petrolTuruGTIPNo ?? '—');
+      if (!totals.has(code)) totals.set(code, [0, 0]);
+      totals.get(code)[slot] += num(row.gunBasiStokTon);
+    });
+  };
+  collect(payload.summary?.dep2?.rows, 0);
+  collect(payload.summary?.dr?.rows, 1);
+
+  return [...totals.entries()]
+    .map(([code, values]) => ({
+      label: gtipName(code) || code,
+      sub: code,
+      values,
+      total: values[0] + values[1],
+    }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 8);
+}
+
+function drawCharts(payload) {
+  lastDashboard = payload;
+  const empty = (host, message) => {
+    host.innerHTML = `<div class="viz-empty">${escapeHtml(message)}</div>`;
+  };
+
+  const tanksHost = document.getElementById('chart-tanks');
+  if (tanksHost) {
+    const tanks = buildTankFill(payload).filter((tank) => tank.capacity > 0);
+    if (tanks.length) tankFillChart(tanksHost, tanks.slice(0, 8));
+    else empty(tanksHost, t('dash.noChartData'));
+  }
+
+  const trendHost = document.getElementById('chart-trend');
+  if (trendHost) {
+    const { series, hidden } = buildTrend(payload);
+    const legend = document.getElementById('legend-trend');
+    if (series.length) {
+      trendChart(trendHost, series, { unit: 'ton' });
+      legend.innerHTML = legendHtml(series.map((s) => s.name))
+        + (hidden ? `<p class="small muted" style="margin:6px 0 0">
+             +${hidden} ${escapeHtml(t('dash.moreTanks'))}</p>` : '');
+    } else {
+      empty(trendHost, t('dash.noChartData'));
+      legend.innerHTML = '';
+    }
+  }
+
+  const productHost = document.getElementById('chart-products');
+  if (productHost) {
+    const rows = buildByProduct(payload);
+    const legend = document.getElementById('legend-products');
+    const names = [t('dash.given'), t('dash.received')];
+    if (rows.length) {
+      groupedBarChart(productHost, rows, names, { unit: 'ton' });
+      legend.innerHTML = legendHtml(names);
+    } else {
+      empty(productHost, t('dash.noChartData'));
+      legend.innerHTML = '';
+    }
+  }
+}
+
+/** Pencere boyutu ya da tema değişince grafikleri yeniden çizer. */
+let redrawTimer;
+const scheduleRedraw = () => {
+  clearTimeout(redrawTimer);
+  redrawTimer = setTimeout(() => {
+    if (lastDashboard && document.getElementById('chart-tanks')) drawCharts(lastDashboard);
+  }, 160);
+};
+window.addEventListener('resize', scheduleRedraw);
+window.addEventListener('epdk:theme', scheduleRedraw);
 
 function envLabel(key) {
   const env = state.environments[key];
@@ -145,22 +328,80 @@ const tableUi = new Map();   // tablo başına arama/sıralama durumu
 
 function uiState(key) {
   if (!tableUi.has(key)) {
-    tableUi.set(key, { search: '', sort: 'islemZamani', dir: 'desc', tab: 'records', selected: new Set() });
+    // DEP-1 saate, DEP-2/DR tarihe göre; en yeni kayıt üstte
+    const sort = key === 'dep1' ? 'saat' : 'tarih';
+    tableUi.set(key, {
+      search: '', sort, dir: 'desc', tab: 'records',
+      selected: new Set(), hidden: hiddenColumns(key),
+    });
   }
   return tableUi.get(key);
 }
 
 function columnsFor(spec) {
-  const columns = [
-    { name: 'islemZamani', label: t('dash.lastSubmission'), kind: 'datetime' },
+  return [
+    { name: 'islemZamani', label: t('table.processedAt'), kind: 'datetime' },
     ...spec.fields.map((field) => ({
       name: field.name,
-      label: pick(field, 'label'),
+      label: pick(field, 'short') || pick(field, 'label'),
+      full: pick(field, 'label'),
       kind: field.kind,
       decimals: field.decimals,
     })),
   ];
-  return columns;
+}
+
+/* Gizlenen kolonlar tarayıcıda saklanır — kullanıcı bir kez ayarlar.
+   Hiç ayarlanmamışsa, tablonun yatay kaydırma olmadan sığması için servisin
+   ürettiği "İşlem Zamanı" kolonu gizli başlar. */
+const DEFAULT_HIDDEN = ['islemZamani'];
+
+function hiddenColumns(key) {
+  try {
+    const stored = localStorage.getItem(`epdk.cols.${key}`);
+    if (stored === null) return new Set(DEFAULT_HIDDEN);
+    return new Set(JSON.parse(stored));
+  } catch {
+    return new Set(DEFAULT_HIDDEN);
+  }
+}
+
+function saveHiddenColumns(key, hidden) {
+  try {
+    localStorage.setItem(`epdk.cols.${key}`, JSON.stringify([...hidden]));
+  } catch { /* gizli mod: tercih saklanamaz, sorun değil */ }
+}
+
+function openColumnPicker(spec, columns, ui, refresh) {
+  const modal = openModal({
+    title: t('table.columns'),
+    subtitle: t('table.columnsHelp'),
+    size: 'sm',
+    body: `<div>${columns.map((column) => `
+      <label class="checkbox">
+        <input type="checkbox" data-col="${escapeHtml(column.name)}"
+               ${ui.hidden.has(column.name) ? '' : 'checked'}>
+        <span>${escapeHtml(column.full || column.label)}</span>
+      </label>`).join('')}</div>`,
+    footer: `
+      <button class="btn btn--ghost spacer" data-act="all">${escapeHtml(t('table.showAll'))}</button>
+      <button class="btn btn--primary" data-act="close">${escapeHtml(t('common.close'))}</button>`,
+  });
+
+  const apply = () => { saveHiddenColumns(spec.key, ui.hidden); refresh(); };
+
+  modal.root.querySelectorAll('[data-col]').forEach((box) =>
+    box.addEventListener('change', () => {
+      if (box.checked) ui.hidden.delete(box.dataset.col);
+      else ui.hidden.add(box.dataset.col);
+      apply();
+    }));
+  modal.root.querySelector('[data-act="all"]').addEventListener('click', () => {
+    ui.hidden.clear();
+    modal.root.querySelectorAll('[data-col]').forEach((box) => { box.checked = true; });
+    apply();
+  });
+  modal.root.querySelector('[data-act="close"]').addEventListener('click', modal.close);
 }
 
 function cellHtml(column, row) {
@@ -174,13 +415,15 @@ function cellHtml(column, row) {
     case 'date':
       return `<td class="nowrap">${fmtDate(value)}</td>`;
     case 'datetime':
-      return `<td class="nowrap small">${fmtDateTime(value)}</td>`;
+      return `<td class="nowrap small" title="${escapeHtml(value ?? '')}">`
+        + `${fmtDateTimeShort(value)}</td>`;
     case 'select':
       return `<td><span class="pill pill--soft">${escapeHtml(gumrukLabel(value))}</span></td>`;
     case 'gtip': {
       const name = gtipName(value);
-      return `<td class="strong">${escapeHtml(value ?? '—')}${
-        name ? `<div class="small muted">${escapeHtml(name)}</div>` : ''}</td>`;
+      return `<td class="strong gtip-cell" title="${escapeHtml(
+        [value, name].filter(Boolean).join(' — '))}">${escapeHtml(value ?? '—')}${
+        name ? `<div class="small muted clip-line">${escapeHtml(name)}</div>` : ''}</td>`;
     }
     case 'tank':
       return `<td class="strong">${escapeHtml(value ?? '—')}</td>`;
@@ -272,12 +515,13 @@ async function loadRecords(ctx, spec, ui) {
     return;
   }
 
-  const columns = columnsFor(spec);
+  const allColumns = columnsFor(spec);
   const refresh = () => loadRecords(ctx, spec, ui);
   const paint = () => {
+    const columns = allColumns.filter((column) => !ui.hidden.has(column.name));
     const filtered = sortRows(filterRows(rows, ui.search), ui.sort, ui.dir);
     host.innerHTML = tableHtml(spec, columns, filtered, rows.length, ui);
-    wire(ctx, spec, columns, filtered, ui, refresh);
+    wire(ctx, spec, columns, allColumns, filtered, ui, refresh);
   };
   paint();
 }
@@ -296,6 +540,10 @@ function tableHtml(spec, columns, rows, totalCount, ui) {
           ${icon('trash')} ${escapeHtml(t('common.deleteSelected'))}
         </button>` : ''}
       <div class="toolbar__spacer"></div>
+      <button class="btn btn--sm btn--ghost" data-act="columns" title="${escapeHtml(t('table.columns'))}">
+        ${icon('columns')} ${escapeHtml(t('table.columns'))}${
+          ui.hidden.size ? ` (${ui.hidden.size})` : ''}
+      </button>
       <button class="btn btn--sm btn--ghost" data-act="refresh">${icon('refresh')} ${escapeHtml(t('common.refresh'))}</button>
       <button class="btn btn--sm btn--ghost" data-act="export">${icon('download')} ${escapeHtml(t('common.export'))}</button>
       <button class="btn btn--sm btn--ghost" data-act="import">${icon('upload')} ${escapeHtml(t('common.import'))}</button>
@@ -344,16 +592,19 @@ function tableHtml(spec, columns, rows, totalCount, ui) {
         <thead><tr>
           <th style="width:34px"><input type="checkbox" data-role="select-all"></th>
           ${head}
-          <th class="col-actions" style="width:124px"></th>
+          <th class="col-actions" style="width:98px"></th>
         </tr></thead>
         <tbody>${body}</tbody>
       </table>
     </div>`;
 }
 
-function wire(ctx, spec, columns, rows, ui, refresh) {
+function wire(ctx, spec, columns, allColumns, rows, ui, refresh) {
   const host = document.getElementById('table-content');
   const find = (id) => rows.find((row) => String(row.id) === String(id));
+
+  host.querySelector('[data-act="columns"]')?.addEventListener('click', () =>
+    openColumnPicker(spec, allColumns, ui, refresh));
 
   const search = host.querySelector('[data-role="search"]');
   if (search) {

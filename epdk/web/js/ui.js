@@ -39,6 +39,19 @@ export function fmtDateTime(value) {
   });
 }
 
+/** Listelerde yer kazanmak için kısa biçim: aynı yıl içindeyse yıl atlanır. */
+export function fmtDateTimeShort(value) {
+  if (!value) return '—';
+  const date = new Date(String(value).replace(' ', 'T'));
+  if (Number.isNaN(date.getTime())) return escapeHtml(value);
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return date.toLocaleString('tr-TR', {
+    day: '2-digit', month: '2-digit',
+    ...(sameYear ? {} : { year: '2-digit' }),
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
 export function fmtDate(value) {
   if (!value) return '—';
   const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
@@ -101,6 +114,7 @@ const ICONS = {
   upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
   eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
   check: '<path d="M20 6L9 17l-5-5"/>',
+  columns: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/>',
   alert: '<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
 };
 

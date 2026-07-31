@@ -151,7 +151,11 @@ function startTokenTimer() {
 
 function applyPreferences() {
   const settings = state.settings || {};
-  document.documentElement.dataset.theme = settings.theme === 'dark' ? 'dark' : 'light';
+  const theme = settings.theme === 'dark' ? 'dark' : 'light';
+  const themeChanged = document.documentElement.dataset.theme !== theme;
+  document.documentElement.dataset.theme = theme;
+  // Grafikler renklerini CSS değişkenlerinden okur; tema değişince yeniden çizilir
+  if (themeChanged) window.dispatchEvent(new Event('epdk:theme'));
   if ((settings.language || 'tr') !== getLanguage()) {
     setLanguage(settings.language || 'tr');
     buildNav();

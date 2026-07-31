@@ -25,6 +25,8 @@ yazmak ve hataları servis reddettikten sonra öğrenmek gerekir. Bu uygulama:
   hangi satırın neden reddedildiğini satır satır gösterir.
 - **Her işlemi kaydeder.** Ne gönderdiniz, servis ne yanıtladı — hepsi yerel
   bir kayıt defterinde saklanır.
+- **Panelde grafiklerle özetler:** tank doluluk oranları, son 24 saatin stok
+  seyri ve petrol türü bazında günlük depolama miktarları.
 
 ---
 
@@ -78,7 +80,7 @@ Kullanıcı adı biçimi: `WSU-` + lisans numaranız — örn. `WSU-DEP/444-2/01
 
 | Menü | İşlev |
 |---|---|
-| **Panel** | Üç tablonun açık kayıt sayıları, son işlemler, oturum bilgileri |
+| **Panel** | Üç tablonun açık kayıt sayıları, **grafikler**, son işlemler, oturum bilgileri |
 | **Tablo DEP-1** | Tank bazında saatlik stok bildirimi |
 | **Tablo DEP-2** | Verilen depolama hizmetleri + "Alınan Hizmetler" sorgusu |
 | **Tablo DR** | Alınan depolama hizmetleri + "Verilen Hizmetler" sorgusu |
@@ -87,7 +89,22 @@ Kullanıcı adı biçimi: `WSU-` + lisans numaranız — örn. `WSU-DEP/444-2/01
 | **İşlem Geçmişi** | Yapılan tüm servis çağrıları, istek/yanıt ayrıntısıyla |
 | **Ayarlar** | Dil, tema, zaman aşımı, onay tercihleri |
 
-### 3. Kayıt işlemleri
+### 3. Panel grafikleri
+
+Panel, bildirimlerinizi üç grafikte özetler. Grafiklerin üzerine gelince
+ayrıntılı değerler görünür; açık ve koyu temada ayrı ayrı okunaklıdır.
+
+| Grafik | Ne gösterir? |
+|---|---|
+| **Tank Doluluk Oranları** | Her tankın son DEP-1 bildirimindeki stoğu, lisanslı kapasitesine göre. Kapasitenin %75'ini geçen tanklar `△`, %90'ı geçenler `▲` işaretiyle ayrıca uyarır. |
+| **Son 24 Saat Stok Seyri** | DEP-1 bildirimlerinden tank başına ton cinsinden stok değişimi (en çok stoklu 5 tank). |
+| **Petrol Türüne Göre Gün Başı Stok** | Bugünkü DEP-2 (verilen hizmet) ve DR (alınan hizmet) miktarları, petrol türü bazında yan yana. |
+
+Grafik renkleri renk körlüğüne karşı doğrulanmış bir palettendir; her seri
+ayrıca gösterge ve doğrudan etiketle adlandırılır, yani bilgi yalnızca renge
+bağlı değildir.
+
+### 4. Kayıt işlemleri
 
 Her tablo sayfasında:
 
@@ -100,8 +117,13 @@ Her tablo sayfasında:
 - **Toplu Yükle** — CSV'den toplu gönderim (aşağıya bakın).
 - **Ara / sırala** — kolon başlıklarına tıklayarak sıralayın, arama kutusuyla
   filtreleyin.
+- **Kolonlar** — listede hangi kolonların görüneceğini seçin. Tercihiniz
+  tarayıcıda saklanır. Servisin ürettiği *İşlem Zamanı* kolonu, tablonun yatay
+  kaydırma olmadan ekrana sığması için varsayılan olarak gizlidir; buradan
+  geri getirebilirsiniz (kaydın tüm alanları 👁 **Ayrıntı** penceresinde de yer
+  alır).
 
-### 4. Toplu yükleme (CSV)
+### 5. Toplu yükleme (CSV)
 
 **Toplu Yükle → Şablon indir** ile doğru başlıkları içeren bir CSV alın,
 Excel'de doldurun ve geri yükleyin. Dosyayı sürükleyip bırakabilir ya da
@@ -217,6 +239,7 @@ uygulamaya istek gönderemez.
 | `epdk/server.py` | Yerel HTTP sunucusu ve `/api` uçları |
 | `epdk/store.py` | SQLite kayıt defteri (parolalar maskelenir) |
 | `epdk/mock_service.py` | Deneme/eğitim için sahte EPDK servisi |
+| `epdk/web/js/charts.js` | Panel grafikleri (bağımlılıksız SVG) |
 | `epdk/web/` | Arayüz (bağımlılıksız HTML + CSS + ES modülleri) |
 
 Ayarlar ve kayıt defteri `~/.epdk-stok/` klasöründe tutulur

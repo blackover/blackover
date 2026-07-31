@@ -453,17 +453,39 @@ class Api:
                         "today": _count_for_day(rows, today),
                         "yesterday": _count_for_day(rows, yesterday),
                         "lastRecord": _latest(rows),
+                        # Grafikler için ham satırlar (arayüz tarafında işlenir)
+                        "rows": rows,
                     }
                 except ApiError as exc:
                     summary[key] = {"ok": False, "message": exc.message, "total": 0,
-                                    "today": 0, "yesterday": 0, "lastRecord": None}
+                                    "today": 0, "yesterday": 0, "lastRecord": None,
+                                    "rows": []}
 
         return {
             "summary": summary,
+            "tanks": self._tanks_for_charts(),
             "activity": self.state.store.list(limit=8),
             "stats": self.state.store.stats(),
             "session": session.describe(),
         }
+
+    def _tanks_for_charts(self) -> List[Dict[str, Any]]:
+        """Tank kapasiteleri — doluluk grafiği için. Hata olursa boş liste."""
+        session = self.state.session
+        if not session.active:
+            return []
+        cached = session.cached("tanks")
+        if cached is not None:
+            return cached
+        try:
+            return self._lookup(
+                cache_key="tanks",
+                endpoint="lisansakayitlitanklistesisorgu",
+                action="tank-listesi",
+                refresh=False,
+            )["data"]
+        except ApiError:
+            return []
 
 
 def _count_for_day(rows: List[Dict[str, Any]], day) -> int:

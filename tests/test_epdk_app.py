@@ -369,8 +369,10 @@ class TestApi(ServersMixin, unittest.TestCase):
         self.call("/api/lookup/tanks")
         self.call("/api/lookup/gtip")
 
+        # Sahte servis T1/T101/T2 için hazır seri üretir; mükerrer kayıt
+        # kuralına takılmamak için burada boştaki "130" numaralı tank kullanılır.
         record = {
-            "saat": half_hour_ago(), "tankNumarasi": "T2",
+            "saat": half_hour_ago(), "tankNumarasi": "130",
             "petrolTuruGTIPNo": "2710.12.31.00.00", "tankStokM3": "100.5",
             "tankStokTon": "80.25", "tankIciSicaklik": "17.5",
             "petrolTuruYogunluk": "798.5",
