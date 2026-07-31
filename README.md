@@ -1,3 +1,11 @@
+> **Bu depoda iki ayrı uygulama var / This repository holds two apps:**
+> - [`epdk/`](epdk/README.md) — **EPDK Petrol Stok İzleme** masaüstü uygulaması
+>   (DEP-1 / DEP-2 / DR bildirimleri: gönder, güncelle, sil, sorgula).
+>   Başlatmak için: `python -m epdk`
+> - `xrp_predictor/` — XRP buy/sell signal predictor (below).
+
+---
+
 # XRP Buy/Sell Predictor
 
 An automatic short-term **BUY / SELL / HOLD** signal app for XRP.

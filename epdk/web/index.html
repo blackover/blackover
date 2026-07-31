@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="tr" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EPDK Petrol Stok İzleme</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛽</text></svg>">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+
+  <!-- ==================== GİRİŞ EKRANI ==================== -->
+  <div id="login-screen" class="login-screen" hidden>
+    <div class="login-art" aria-hidden="true">
+      <div class="login-art__inner">
+        <div class="brand brand--lg">
+          <span class="brand__mark">⛽</span>
+          <div>
+            <div class="brand__name">Petrol Stok İzleme</div>
+            <div class="brand__sub">EPDK Web Servis İstemcisi</div>
+          </div>
+        </div>
+        <ul class="login-art__list">
+          <li><b>DEP-1</b> · Tank bazında saatlik stok bildirimi</li>
+          <li><b>DEP-2</b> · Verilen depolama hizmetleri</li>
+          <li><b>DR</b> · Alınan depolama hizmetleri</li>
+          <li><b>Gönder · Güncelle · Sil · Sorgula</b></li>
+        </ul>
+        <p class="login-art__note">
+          Gönderim öncesi kayıtlarınız EPDK kurallarına göre kontrol edilir;
+          hatalı kayıtlar servise hiç gitmeden size bildirilir.
+        </p>
+      </div>
+    </div>
+
+    <div class="login-panel">
+      <form id="login-form" class="login-card" autocomplete="on">
+        <h1 class="login-card__title" data-i18n="login.title">Oturum Aç</h1>
+        <p class="login-card__sub" data-i18n="login.subtitle">
+          EPDK tarafından tarafınıza iletilen kullanıcı adı ve parola ile giriş yapın.
+        </p>
+
+        <div class="field">
+          <label class="field__label" data-i18n="login.environment">Ortam</label>
+          <div class="segmented" id="env-picker" role="tablist"></div>
+        </div>
+
+        <div class="field" id="custom-url-field" hidden>
+          <label class="field__label" for="custom-url" data-i18n="login.customUrl">Özel servis adresi</label>
+          <input class="input" id="custom-url" name="customBaseUrl" type="url"
+                 placeholder="https://sunucu/petrolstok/api" spellcheck="false">
+        </div>
+
+        <div class="field">
+          <label class="field__label" for="username" data-i18n="login.username">Kullanıcı Adı</label>
+          <input class="input" id="username" name="username" type="text" required
+                 placeholder="WSU-DEP/444-2/01592" autocomplete="username" spellcheck="false">
+          <p class="field__help" data-i18n="login.usernameHelp">
+            Biçim: WSU- ile başlayan lisans numaranız.
+          </p>
+        </div>
+
+        <div class="field">
+          <label class="field__label" for="password" data-i18n="login.password">Parola</label>
+          <div class="input-group">
+            <input class="input" id="password" name="password" type="password" required
+                   autocomplete="current-password">
+            <button class="input-group__btn" type="button" id="toggle-password"
+                    aria-label="Parolayı göster">👁</button>
+          </div>
+        </div>
+
+        <label class="checkbox">
+          <input type="checkbox" id="auto-renew" checked>
+          <span data-i18n="login.autoRenew">Oturumu otomatik yenile (parola yalnızca bellekte tutulur)</span>
+        </label>
+
+        <button class="btn btn--primary btn--block" type="submit" id="login-submit">
+          <span data-i18n="login.submit">Giriş Yap</span>
+        </button>
+
+        <p class="login-card__error" id="login-error" hidden></p>
+
+        <div class="login-card__foot">
+          <span id="login-version"></span>
+          <button type="button" class="link" id="login-lang">EN</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================== UYGULAMA ==================== -->
+  <div id="app" class="app" hidden>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar__head">
+        <div class="brand">
+          <span class="brand__mark">⛽</span>
+          <div class="brand__text">
+            <div class="brand__name">Petrol Stok</div>
+            <div class="brand__sub">EPDK Bildirim</div>
+          </div>
+        </div>
+        <button class="icon-btn sidebar__toggle" id="sidebar-toggle" title="Menüyü daralt">
+          <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+      </div>
+
+      <nav class="nav" id="nav"></nav>
+
+      <div class="sidebar__foot">
+        <div class="session-chip" id="session-chip">
+          <div class="session-chip__avatar" id="session-initial">?</div>
+          <div class="session-chip__text">
+            <div class="session-chip__name" id="session-user">—</div>
+            <div class="session-chip__meta" id="session-licence">—</div>
+          </div>
+        </div>
+        <button class="btn btn--ghost btn--block btn--sm" id="logout-btn">
+          <svg viewBox="0 0 24 24" class="icon"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+          <span data-i18n="nav.logout">Çıkış</span>
+        </button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <button class="icon-btn topbar__menu" id="mobile-menu" aria-label="Menü">
+          <svg viewBox="0 0 24 24"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+        </button>
+
+        <div class="topbar__title">
+          <h1 id="page-title">Panel</h1>
+          <p id="page-subtitle">—</p>
+        </div>
+
+        <div class="topbar__actions">
+          <span class="badge" id="env-badge" title="Bağlı olunan ortam">—</span>
+          <span class="badge badge--token" id="token-badge" title="Oturum süresi">—</span>
+          <button class="icon-btn" id="lang-toggle" title="Dil / Language">TR</button>
+          <button class="icon-btn" id="theme-toggle" title="Tema">
+            <svg viewBox="0 0 24 24" class="icon-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="view" id="view"></main>
+    </div>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

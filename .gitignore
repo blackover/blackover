@@ -7,3 +7,9 @@ venv/
 report.html
 signals.csv
 paper_portfolio.json
+
+# EPDK uygulaması — yerel ayarlar ve kayıt defteri (asla depoya girmemeli)
+.epdk-stok/
+settings.json
+activity.db
+*.db
