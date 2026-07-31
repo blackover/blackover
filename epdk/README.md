@@ -27,6 +27,8 @@ yazmak ve hataları servis reddettikten sonra öğrenmek gerekir. Bu uygulama:
   bir kayıt defterinde saklanır.
 - **Panelde grafiklerle özetler:** tank doluluk oranları, son 24 saatin stok
   seyri ve petrol türü bazında günlük depolama miktarları.
+- **Birden fazla müşteriyle çalışır:** kayıtlı müşteriler arasında hızlıca
+  geçiş yapar, geçişte tüm listeleri yeni lisansa göre tazeler.
 - **Yarım saatlik döngüyü takip eder:** açık saat dilimini, sıradaki dilime
   kalan süreyi ve o dilim için henüz bildirilmemiş tankları gösterir.
 
@@ -78,7 +80,21 @@ Kullanıcı adı biçimi: `WSU-` + lisans numaranız — örn. `WSU-DEP/444-2/01
 > kapattığınızda silinir. Diske yalnızca kullanıcı adı, ortam ve görünüm
 > tercihleri kaydedilir.
 
-### 2. Sol menü
+### 2. Birden fazla müşteri
+
+Uygulama birden çok lisans (müşteri) için sırayla kullanılabilir. Başarılı her
+girişten sonra müşteri **Kayıtlı müşteriler** listesine eklenir; sonraki
+seferde müşteriye tıklayıp yalnızca parolayı yazmanız yeterlidir. Listeden
+çıkarmak için satırdaki **×** düğmesini kullanın.
+
+> Listede yalnızca kullanıcı adı, ortam ve (özel ortamsa) adres tutulur.
+> **Parola hiçbir müşteri için diske yazılmaz.**
+
+Müşteri değiştirdiğinizde tank listesi, petrol türleri, tablo içerikleri ve
+panel grafikleri yeni lisansa göre baştan yüklenir; önceki müşterinin verisi
+ekranda kalmaz.
+
+### 3. Sol menü
 
 | Menü | İşlev |
 |---|---|
@@ -91,7 +107,7 @@ Kullanıcı adı biçimi: `WSU-` + lisans numaranız — örn. `WSU-DEP/444-2/01
 | **İşlem Geçmişi** | Yapılan tüm servis çağrıları, istek/yanıt ayrıntısıyla |
 | **Ayarlar** | Dil, tema, zaman aşımı, onay tercihleri |
 
-### 3. Bildirim döngüsü (DEP-1)
+### 4. Bildirim döngüsü (DEP-1)
 
 DEP-1 verisi yalnızca tam saat (**:00**) ve buçuklarda (**:30**) kabul edilir —
 16:00, 16:30, 17:00 … Uygulama bu döngüyü hem panelde hem DEP-1 sayfasının
@@ -107,7 +123,7 @@ DEP-1 verisi yalnızca tam saat (**:00**) ve buçuklarda (**:30**) kabul edilir 
 > Sağ üstteki **Oturum** rozeti bununla ilgili değildir; o, EPDK oturum
 > anahtarının (token) 60 dakikalık ömründen kalan süreyi gösterir.
 
-### 4. Panel grafikleri
+### 5. Panel grafikleri
 
 Panel, bildirimlerinizi üç grafikte özetler. Grafiklerin üzerine gelince
 ayrıntılı değerler görünür; açık ve koyu temada ayrı ayrı okunaklıdır.
@@ -122,7 +138,7 @@ Grafik renkleri renk körlüğüne karşı doğrulanmış bir palettendir; her s
 ayrıca gösterge ve doğrudan etiketle adlandırılır, yani bilgi yalnızca renge
 bağlı değildir.
 
-### 5. Kayıt işlemleri
+### 6. Kayıt işlemleri
 
 Her tablo sayfasında:
 
@@ -141,7 +157,7 @@ Her tablo sayfasında:
   geri getirebilirsiniz (kaydın tüm alanları 👁 **Ayrıntı** penceresinde de yer
   alır).
 
-### 6. Toplu yükleme (CSV)
+### 7. Toplu yükleme (CSV)
 
 **Toplu Yükle → Şablon indir** ile doğru başlıkları içeren bir CSV alın,
 Excel'de doldurun ve geri yükleyin. Dosyayı sürükleyip bırakabilir ya da
@@ -217,8 +233,16 @@ python -m epdk
 ```
 
 Giriş ekranında **Özel** ortamını seçip adres olarak
-`http://127.0.0.1:9000/petrolstok/api`, kullanıcı adı `WSU-DEP/444-2/01592`,
-parola `deneme` girin. Sahte servis örnek tanklar, GTİP listesi ve hazır
+`http://127.0.0.1:9000/petrolstok/api` girin. İki deneme müşterisi vardır
+(ikisinin de parolası `deneme`):
+
+| Kullanıcı adı | Tanklar |
+|---|---|
+| `WSU-DEP/444-2/01592` | T1, T2, T101, 130 |
+| `WSU-DEP/7646-3/39543` | T-1010, T-1015, T-1020, T-2016, T-2904 |
+
+İkisi arasında geçiş yaparak müşteri değişiminin doğru çalıştığını
+görebilirsiniz. Sahte servis örnek tanklar, GTİP listesi ve hazır
 kayıtlarla gelir ve gerçek servisin hata mesajlarını üretir.
 
 ---
@@ -229,9 +253,12 @@ kayıtlarla gelir ve gerçek servisin hata mesajlarını üretir.
 python tests/test_epdk_app.py
 ```
 
-41 test: istemci sözleşmesi (token'ın `message` içinde gelmesi, gövdeli GET
-sorguları), doğrulama kuralları, uçtan uca CRUD, toplu yükleme, kayıt defteri
-ve sunucu güvenliği.
+45 test: istemci sözleşmesi (token'ın `message` içinde gelmesi, gövdeli GET
+sorguları), doğrulama kuralları, uçtan uca CRUD, toplu yükleme, kayıt defteri,
+sunucu güvenliği ve müşteri değişiminde listelerin tazelenmesi.
+
+Sonuncusu gerçek bir tarayıcıda çalışır (`tests/browser_customer_switch.js`);
+`node` ve `playwright` kurulu değilse o test atlanır, diğerleri çalışır.
 
 ---
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
@@ -30,6 +31,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "environment": "test",          # güvenli taraf: varsayılan test ortamı
     "custom_base_url": "",
     "username": "",                 # son kullanılan kullanıcı adı (parola değil)
+    "profiles": [],                 # kayıtlı müşteriler (parola içermez)
     "language": "tr",
     "theme": "light",
     "timeout": 45,                  # saniye
@@ -86,6 +88,43 @@ def save_settings(values: Dict[str, Any]) -> Dict[str, Any]:
         json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return current
+
+
+MAX_PROFILES = 20
+
+
+def upsert_profile(settings: Dict[str, Any], *, username: str, environment: str,
+                   custom_base_url: str = "") -> Dict[str, Any]:
+    """Başarılı girişten sonra müşteriyi hızlı geçiş listesine ekler.
+
+    Yalnızca kullanıcı adı, ortam ve (özel ortamsa) adres saklanır —
+    **parola hiçbir zaman yazılmaz.**
+    """
+    profiles = [dict(item) for item in settings.get("profiles", [])
+                if isinstance(item, dict)]
+    key = (username, environment)
+    profiles = [item for item in profiles
+                if (item.get("username"), item.get("environment")) != key]
+
+    profiles.insert(0, {
+        "username": username,
+        "environment": environment,
+        "custom_base_url": custom_base_url if environment == "custom" else "",
+        "licence": username[4:] if username.startswith("WSU-") else username,
+        "last_used": datetime.now().isoformat(timespec="seconds"),
+    })
+    settings["profiles"] = profiles[:MAX_PROFILES]
+    return settings
+
+
+def remove_profile(settings: Dict[str, Any], *, username: str,
+                   environment: str) -> Dict[str, Any]:
+    settings["profiles"] = [
+        item for item in settings.get("profiles", [])
+        if not (item.get("username") == username
+                and item.get("environment") == environment)
+    ]
+    return settings
 
 
 def resolve_base_url(settings: Dict[str, Any]) -> str:

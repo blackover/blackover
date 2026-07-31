@@ -47,6 +47,7 @@ export const api = {
   login: (body) => call('/api/login', { method: 'POST', body }),
   logout: () => call('/api/logout', { method: 'POST', body: {} }),
   saveSettings: (body) => call('/api/settings', { method: 'POST', body }),
+  removeProfile: (body) => call('/api/profiles/remove', { method: 'POST', body }),
   dashboard: () => call('/api/dashboard'),
 
   tanks: (refresh = false) => call(`/api/lookup/tanks${refresh ? '?refresh=1' : ''}`),

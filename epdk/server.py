@@ -29,8 +29,10 @@ from .config import (
     ENVIRONMENTS,
     db_path,
     load_settings,
+    remove_profile,
     resolve_base_url,
     save_settings,
+    upsert_profile,
 )
 from .schema import TABLES, describe, get_table
 from .session import Session
@@ -189,9 +191,11 @@ class Api:
             request={"username": username, "password": "••••••"},
         )
 
-        # Kullanıcı adı ve ortam bir sonraki açılış için saklanır (parola değil).
+        # Kullanıcı adı, ortam ve müşteri profili saklanır (parola değil).
         settings["username"] = username
         settings["auto_renew"] = auto_renew
+        upsert_profile(settings, username=username, environment=environment,
+                       custom_base_url=custom_url)
         self.state.settings = save_settings(settings)
         return {"session": info}
 
@@ -200,6 +204,16 @@ class Api:
         return {"session": self.state.session.describe()}
 
     # ----------------------------------------------------------- ayarlar
+    def delete_profile(self, payload: Dict[str, Any],
+                       _query: Dict[str, Any]) -> Dict[str, Any]:
+        settings = remove_profile(
+            self.state.settings,
+            username=str(payload.get("username") or ""),
+            environment=str(payload.get("environment") or ""),
+        )
+        self.state.settings = save_settings(settings)
+        return {"settings": self.state.settings}
+
     def update_settings(self, payload: Dict[str, Any], _query: Dict[str, Any]) -> Dict[str, Any]:
         self.state.settings = save_settings(payload or {})
         self.state.store.limit = int(self.state.settings.get("log_limit", 2000))
@@ -596,6 +610,8 @@ class Handler(BaseHTTPRequestHandler):
             return api.logout, ()
         if head == "settings" and method == "POST":
             return api.update_settings, ()
+        if head == "profiles" and method == "POST" and rest == ["remove"]:
+            return api.delete_profile, ()
         if head == "dashboard" and method == "GET":
             return api.dashboard, ()
         if head == "log":

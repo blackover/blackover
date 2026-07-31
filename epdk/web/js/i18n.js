@@ -23,6 +23,9 @@ const DICT = {
     'login.submit': 'Giriş Yap',
     'login.custom': 'Özel',
     'login.connecting': 'Bağlanılıyor…',
+    'login.profiles': 'Kayıtlı müşteriler',
+    'login.profilesHelp': 'Müşteriye tıklayın; yalnızca parolayı girmeniz yeterlidir.',
+    'login.removeProfile': 'Listeden çıkar',
 
     'common.refresh': 'Yenile',
     'common.new': 'Yeni Kayıt',
@@ -200,6 +203,9 @@ const DICT = {
     'login.submit': 'Sign in',
     'login.custom': 'Custom',
     'login.connecting': 'Connecting…',
+    'login.profiles': 'Saved customers',
+    'login.profilesHelp': 'Pick a customer; you only need to type the password.',
+    'login.removeProfile': 'Remove from list',
 
     'common.refresh': 'Refresh',
     'common.new': 'New record',

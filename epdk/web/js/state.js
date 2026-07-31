@@ -37,6 +37,19 @@ export async function loadMeta() {
   return payload;
 }
 
+/**
+ * Müşteriye özel her şeyi temizler.
+ *
+ * Uygulama birden çok müşteri (lisans) için sırayla kullanılır. Tank ve GTİP
+ * listeleri lisansa göre değiştiği için, oturum kapanırken ya da başka bir
+ * kullanıcıyla giriş yapılırken önbellek boşaltılmalıdır — aksi hâlde bir
+ * önceki müşterinin tankları ekranda kalır ve doğrulama yanlış listeye bakar.
+ */
+export function resetCustomerState() {
+  state.lookups.tanks = null;
+  state.lookups.gtip = null;
+}
+
 /** Tank ve GTİP listelerini (bir kez) yükler; hata olursa sessizce boş bırakır. */
 export async function ensureLookups(force = false) {
   const jobs = [];

@@ -510,6 +510,69 @@ class TestApi(ServersMixin, unittest.TestCase):
         self.assertEqual(status, 401)
         self.login()
 
+    def test_switching_customer_refreshes_tank_list(self):
+        """Farklı müşteriye geçildiğinde tank listesi tazelenmeli.
+
+        Uygulama birden çok lisans için sırayla kullanılıyor; bir önceki
+        müşterinin tankları görünmeye devam ederse hem yanlış liste gösterilir
+        hem de tank doğrulaması yanlış listeye bakar.
+        """
+        first, _ = self.call("/api/lookup/tanks")
+        first_tanks = {tank["tankNo"] for tank in first["data"]}
+        self.assertIn("T1", first_tanks)
+
+        # İkinci müşteriyle giriş yap
+        self.call("/api/logout", "POST", {})
+        self.call("/api/login", "POST", {
+            "username": mock_service.DEMO_USER_2,
+            "password": mock_service.DEMO_PASSWORD,
+            "environment": "custom", "customBaseUrl": self.mock_base,
+        })
+
+        second, _ = self.call("/api/lookup/tanks")
+        second_tanks = {tank["tankNo"] for tank in second["data"]}
+        self.assertIn("T-1010", second_tanks)
+        self.assertNotEqual(first_tanks, second_tanks)
+        self.assertFalse(first_tanks & second_tanks,
+                         "önceki müşterinin tankları listede kalmamalı")
+        self.assertFalse(second["cached"], "yeni oturumda önbellek kullanılmamalı")
+
+    def test_switching_customer_isolates_records(self):
+        """Her müşteri yalnızca kendi kayıtlarını görmeli."""
+        mine, _ = self.call("/api/table/dep1")
+        self.assertTrue(mine["data"])
+        self.assertTrue(all(row["kullanici"] == mock_service.DEMO_USER
+                            for row in mine["data"]))
+
+        self.call("/api/logout", "POST", {})
+        self.call("/api/login", "POST", {
+            "username": mock_service.DEMO_USER_2,
+            "password": mock_service.DEMO_PASSWORD,
+            "environment": "custom", "customBaseUrl": self.mock_base,
+        })
+        theirs, _ = self.call("/api/table/dep1")
+        self.assertFalse(any(row["kullanici"] == mock_service.DEMO_USER
+                             for row in theirs["data"]))
+
+    def test_tank_validation_uses_current_customer_list(self):
+        """İkinci müşteride, birinci müşterinin tankı reddedilmeli."""
+        self.call("/api/logout", "POST", {})
+        self.call("/api/login", "POST", {
+            "username": mock_service.DEMO_USER_2,
+            "password": mock_service.DEMO_PASSWORD,
+            "environment": "custom", "customBaseUrl": self.mock_base,
+        })
+        self.call("/api/lookup/tanks")   # yeni müşterinin listesi önbelleğe alınır
+
+        payload, _ = self.call("/api/table/dep1/validate", "POST", {"record": {
+            "saat": half_hour_ago(), "tankNumarasi": "T1",   # önceki müşterinin tankı
+            "petrolTuruGTIPNo": "2710.19.43.00.11", "tankStokM3": "10",
+            "tankStokTon": "8", "tankIciSicaklik": "15", "petrolTuruYogunluk": "800",
+        }})
+        self.assertFalse(payload["valid"])
+        self.assertTrue(any(issue["field"] == "tankNumarasi"
+                            for issue in payload["errors"]))
+
     def test_static_index_served(self):
         with urllib.request.urlopen(f"{self.app_base}/", timeout=10) as response:
             body = response.read().decode()
@@ -523,6 +586,57 @@ class TestApi(ServersMixin, unittest.TestCase):
         except urllib.error.HTTPError as exc:
             body = exc.read().decode()
         self.assertNotIn("root:", body)
+
+
+def _playwright_available() -> bool:
+    """Tarayıcı testi yalnızca node + playwright kuruluysa çalışır."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("node"):
+        return False
+    probe = (
+        "try{require('playwright')}catch(e){"
+        "require(process.env.PLAYWRIGHT_PATH||"
+        "'/opt/node22/lib/node_modules/playwright')}"
+    )
+    try:
+        return subprocess.run(
+            ["node", "-e", probe], capture_output=True, timeout=30
+        ).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+class TestBrowser(ServersMixin, unittest.TestCase):
+    """Tarayıcı üzerinden uçtan uca kontrol (playwright yoksa atlanır)."""
+
+    @unittest.skipUnless(_playwright_available(), "node + playwright gerekli")
+    def test_switching_customer_refreshes_lists_in_browser(self):
+        import glob
+        import subprocess
+
+        script = Path(__file__).with_name("browser_customer_switch.js")
+        env = dict(os.environ)
+        env.update(
+            APP_URL=self.app_base,
+            MOCK_URL=self.mock_base,
+            USER_A=mock_service.DEMO_USER,
+            USER_B=mock_service.DEMO_USER_2,
+            EPDK_TEST_PASSWORD=mock_service.DEMO_PASSWORD,
+        )
+        # Ortamda hazır kurulu Chromium varsa onu kullan
+        for candidate in sorted(glob.glob("/opt/pw-browsers/chromium-*/chrome-linux/chrome")):
+            env["CHROMIUM_PATH"] = candidate
+            break
+
+        result = subprocess.run(
+            ["node", str(script)], capture_output=True, text=True, timeout=300, env=env
+        )
+        self.assertEqual(
+            result.returncode, 0,
+            f"tarayıcı testi başarısız:\n{result.stdout}\n{result.stderr}",
+        )
 
 
 if __name__ == "__main__":

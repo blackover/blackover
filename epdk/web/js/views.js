@@ -210,7 +210,6 @@ function paintSlotCard(reload, rows, hostId = 'slot-body') {
 
 /* ------------------------------------------------------- panel grafikleri */
 
-let lastDashboard = null;
 
 const num = (value) => {
   const parsed = Number(String(value ?? '').replace(',', '.'));
@@ -361,6 +360,19 @@ function envLabel(key) {
    ========================================================================== */
 
 const tableUi = new Map();   // tablo başına arama/sıralama durumu
+let lastDashboard = null;    // grafiklerin yeniden çizimi için son panel verisi
+
+/**
+ * Müşteri değişince görünüm durumunu sıfırlar: bir önceki lisansın seçili
+ * satırları, araması ve panel verisi taşınmamalıdır. (Kolon tercihi
+ * tarayıcıda saklanır ve kullanıcıya ait bir ayardır; korunur.)
+ */
+export function resetViewState() {
+  tableUi.clear();
+  lastDashboard = null;
+  slotTicker?.();
+  slotTicker = null;
+}
 
 function uiState(key) {
   if (!tableUi.has(key)) {

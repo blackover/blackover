@@ -2,10 +2,13 @@
 
 import { api } from './api.js';
 import { applyStatic, getLanguage, pick, setLanguage, t } from './i18n.js';
-import { ensureLookups, loadMeta, state, tableSpec } from './state.js';
+import {
+  ensureLookups, loadMeta, resetCustomerState, state, tableSpec,
+} from './state.js';
 import { escapeHtml, fmtDuration, icon, initials, toast } from './ui.js';
 import {
-  renderDashboard, renderGtip, renderLog, renderSettings, renderTable, renderTanks,
+  renderDashboard, renderGtip, renderLog, renderSettings, renderTable,
+  renderTanks, resetViewState,
 } from './views.js';
 
 const appNode = document.getElementById('app');
@@ -122,6 +125,8 @@ function paintToken() {
     if (!expiryWarned) {
       expiryWarned = true;
       toast('err', t('session.expired'), '', 0);
+      resetCustomerState();
+      resetViewState();
       showLogin();
     }
   } else if (left <= 300 && !state.session.autoRenew && !expiryWarned) {
@@ -143,8 +148,13 @@ function startTokenTimer() {
       try {
         const { session } = await api.session();
         state.session = session;
-        if (!session.active) showLogin();
-        else expiryWarned = false;
+        if (!session.active) {
+          resetCustomerState();
+          resetViewState();
+          showLogin();
+        } else {
+          expiryWarned = false;
+        }
       } catch { /* geçici ağ hatası; bir sonraki turda yeniden denenir */ }
     }
   }, 1000);
@@ -189,8 +199,76 @@ function showLogin() {
   document.getElementById('login-version').textContent =
     `${state.app.name} · v${state.app.version}`;
   buildEnvironmentPicker();
+  buildProfileList();
   const field = state.settings.username ? 'password' : 'username';
   setTimeout(() => document.getElementById(field)?.focus(), 60);
+}
+
+/**
+ * Kayıtlı müşteriler — birden fazla lisansla çalışırken hızlı geçiş.
+ * Yalnızca kullanıcı adı ve ortam saklanır; parola her girişte istenir.
+ */
+function buildProfileList() {
+  const profiles = state.settings.profiles || [];
+  const field = document.getElementById('profiles-field');
+  const list = document.getElementById('profile-list');
+  field.hidden = profiles.length === 0;
+  if (!profiles.length) return;
+
+  const currentUser = document.getElementById('username').value.trim();
+  list.innerHTML = profiles.map((profile) => {
+    const environment = state.environments[profile.environment];
+    const envLabelText = environment ? pick(environment, 'label') : t('login.custom');
+    return `
+      <div class="profile ${profile.username === currentUser ? 'is-active' : ''}"
+           data-profile="${escapeHtml(profile.username)}"
+           data-env="${escapeHtml(profile.environment)}"
+           data-url="${escapeHtml(profile.custom_base_url || '')}"
+           role="button" tabindex="0">
+        <span class="profile__avatar">${escapeHtml(initials(profile.username))}</span>
+        <span class="profile__text">
+          <span class="profile__name">${escapeHtml(profile.licence || profile.username)}</span>
+          <span class="profile__meta">${escapeHtml(envLabelText)}</span>
+        </span>
+        <button type="button" class="profile__remove"
+                title="${escapeHtml(t('login.removeProfile'))}">×</button>
+      </div>`;
+  }).join('');
+
+  const choose = (node) => {
+    document.getElementById('username').value = node.dataset.profile;
+    const environment = node.dataset.env;
+    document.querySelectorAll('#env-picker [data-env]').forEach((button) =>
+      button.setAttribute('aria-selected', String(button.dataset.env === environment)));
+    const customField = document.getElementById('custom-url-field');
+    customField.hidden = environment !== 'custom';
+    if (environment === 'custom') document.getElementById('custom-url').value = node.dataset.url;
+    list.querySelectorAll('.profile').forEach((item) =>
+      item.classList.toggle('is-active', item === node));
+    document.getElementById('password').focus();
+  };
+
+  list.querySelectorAll('.profile').forEach((node) => {
+    node.addEventListener('click', (event) => {
+      if (event.target.closest('.profile__remove')) return;
+      choose(node);
+    });
+    node.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); choose(node); }
+    });
+    node.querySelector('.profile__remove').addEventListener('click', async (event) => {
+      event.stopPropagation();
+      try {
+        const { settings } = await api.removeProfile({
+          username: node.dataset.profile, environment: node.dataset.env,
+        });
+        state.settings = settings;
+        buildProfileList();
+      } catch (error) {
+        toast('err', t('common.error'), error.message);
+      }
+    });
+  });
 }
 
 function buildEnvironmentPicker() {
@@ -236,6 +314,10 @@ async function submitLogin(event) {
       customBaseUrl: document.getElementById('custom-url').value.trim(),
       autoRenew: document.getElementById('auto-renew').checked,
     });
+    // Farklı bir müşteriye geçiliyor olabilir; önceki lisansın tank ve GTİP
+    // listeleri ile tablo durumu taşınmamalı.
+    resetCustomerState();
+    resetViewState();
     state.session = session;
     document.getElementById('password').value = '';
     await enterApp();
@@ -251,7 +333,7 @@ async function submitLogin(event) {
 /* ------------------------------------------------------------- uygulama */
 
 async function enterApp() {
-  await loadMeta();
+  await loadMeta();   // profiller dâhil güncel ayarları getirir
   applyPreferences();
   loginNode.hidden = true;
   appNode.hidden = false;
@@ -288,6 +370,8 @@ function bindChrome() {
   document.getElementById('logout-btn').addEventListener('click', async () => {
     try { await api.logout(); } catch { /* oturum zaten kapanmış olabilir */ }
     state.session = { active: false };
+    resetCustomerState();
+    resetViewState();
     showLogin();
   });
 

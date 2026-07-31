@@ -30,20 +30,45 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Tuple
 
 DEMO_USER = "WSU-DEP/444-2/01592"
+# İkinci müşteri: farklı tanklar ve farklı kayıtlar — birden fazla müşteriyle
+# çalışırken listelerin doğru tazelendiğini denemek için.
+DEMO_USER_2 = "WSU-DEP/7646-3/39543"
 DEMO_PASSWORD = "deneme"
 SECRET = b"mock-epdk-secret"
 TOKEN_TTL = 3600  # kılavuz: 60 dakika
 
-TANKS = [
-    {"id": 1314, "tesisIlIlce": "KIRIKKALE - BAHŞİLİ", "tankTuru": "Gümrüklü",
-     "tankNo": "T1", "yakitTuru": "Motorin", "kapasiteM3": 1200.0},
-    {"id": 1315, "tesisIlIlce": "KIRIKKALE - BAHŞİLİ", "tankTuru": "Millileşmiş",
-     "tankNo": "T2", "yakitTuru": "Benzin", "kapasiteM3": 850.0},
-    {"id": 1316, "tesisIlIlce": "KOCAELİ - KÖRFEZ", "tankTuru": "Gümrüklü",
-     "tankNo": "T101", "yakitTuru": "Fuel Oil", "kapasiteM3": 5000.0},
-    {"id": 1317, "tesisIlIlce": "KOCAELİ - KÖRFEZ", "tankTuru": "Millileşmiş",
-     "tankNo": "130", "yakitTuru": "Motorin", "kapasiteM3": 3200.0},
-]
+# Tanklar lisansa (müşteriye) göre değişir.
+TANKS_BY_USER = {
+    DEMO_USER: [
+        {"id": 1314, "tesisIlIlce": "KIRIKKALE - BAHŞİLİ", "tankTuru": "Gümrüklü",
+         "tankNo": "T1", "yakitTuru": "Motorin", "kapasiteM3": 1200.0},
+        {"id": 1315, "tesisIlIlce": "KIRIKKALE - BAHŞİLİ", "tankTuru": "Millileşmiş",
+         "tankNo": "T2", "yakitTuru": "Benzin", "kapasiteM3": 850.0},
+        {"id": 1316, "tesisIlIlce": "KOCAELİ - KÖRFEZ", "tankTuru": "Gümrüklü",
+         "tankNo": "T101", "yakitTuru": "Fuel Oil", "kapasiteM3": 5000.0},
+        {"id": 1317, "tesisIlIlce": "KOCAELİ - KÖRFEZ", "tankTuru": "Millileşmiş",
+         "tankNo": "130", "yakitTuru": "Motorin", "kapasiteM3": 3200.0},
+    ],
+    DEMO_USER_2: [
+        {"id": 2201, "tesisIlIlce": "İZMİR - ALİAĞA", "tankTuru": "Gümrüklü",
+         "tankNo": "T-1010", "yakitTuru": "Motorin", "kapasiteM3": 9500.0},
+        {"id": 2202, "tesisIlIlce": "İZMİR - ALİAĞA", "tankTuru": "Gümrüklü",
+         "tankNo": "T-1015", "yakitTuru": "Motorin", "kapasiteM3": 9500.0},
+        {"id": 2203, "tesisIlIlce": "İZMİR - ALİAĞA", "tankTuru": "Millileşmiş",
+         "tankNo": "T-1020", "yakitTuru": "Benzin", "kapasiteM3": 4200.0},
+        {"id": 2204, "tesisIlIlce": "MERSİN - TARSUS", "tankTuru": "Millileşmiş",
+         "tankNo": "T-2016", "yakitTuru": "Fuel Oil", "kapasiteM3": 15000.0},
+        {"id": 2205, "tesisIlIlce": "MERSİN - TARSUS", "tankTuru": "Gümrüklü",
+         "tankNo": "T-2904", "yakitTuru": "Havacılık Yakıtı", "kapasiteM3": 6400.0},
+    ],
+}
+
+# Geriye dönük kolaylık: doğrulama yardımcıları varsayılan müşteriyi kullanır.
+TANKS = TANKS_BY_USER[DEMO_USER]
+
+
+def tanks_for(username: str) -> List[Dict[str, Any]]:
+    return TANKS_BY_USER.get(username, [])
 
 PETROL_TYPES = [
     ("1111.00.00.00.01", "Rafineri Yakıt Gazı"),
@@ -196,7 +221,7 @@ def _has_lower(text: str) -> bool:
     return any(ch.islower() for ch in text)
 
 
-def validate(table: str, body: Dict[str, Any]) -> str:
+def validate(table: str, body: Dict[str, Any], username: str = DEMO_USER) -> str:
     """Kılavuzdaki başlıca kuralları uygular; hata varsa mesajı döndürür."""
     gtip_codes = {code for code, _ in PETROL_TYPES}
 
@@ -217,7 +242,7 @@ def validate(table: str, body: Dict[str, Any]) -> str:
             return "Veri ekleme süreniz dolmuştur."
 
         tank_no = str(body.get("tankNumarasi") or "")
-        tank = next((t for t in TANKS if t["tankNo"] == tank_no), None)
+        tank = next((t for t in tanks_for(username) if t["tankNo"] == tank_no), None)
         if tank is None:
             return "Girilen Tank Numarası Hatalı."
 
@@ -287,10 +312,13 @@ UNIQUE_KEYS = {
 }
 
 
-def duplicate_exists(table: str, body: Dict[str, Any], skip_id: str = "") -> bool:
+def duplicate_exists(table: str, body: Dict[str, Any], skip_id: str = "",
+                     username: str = "") -> bool:
     keys = UNIQUE_KEYS[table]
     signature = tuple(str(body.get(key, "")) for key in keys)
     for row in STORE.tables[table]:
+        if username and row.get("kullanici") != username:
+            continue
         if skip_id and str(row["id"]).upper() == skip_id.upper():
             continue
         if tuple(str(row.get(key, "")) for key in keys) == signature:
@@ -301,6 +329,7 @@ def duplicate_exists(table: str, body: Dict[str, Any], skip_id: str = "") -> boo
 # -------------------------------------------------------------------- HTTP
 class MockHandler(BaseHTTPRequestHandler):
     server_version = "MockEPDK/1.0"
+    username = ""
 
     def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
         if getattr(self.server, "verbose", False):
@@ -331,6 +360,7 @@ class MockHandler(BaseHTTPRequestHandler):
         claims = self._authenticate()
         if claims is None:
             return
+        self.username = str(claims.get("userName") or "")
 
         try:
             self._route(route, body)
@@ -347,7 +377,8 @@ class MockHandler(BaseHTTPRequestHandler):
             return
 
         if route == "lisansakayitlitanklistesisorgu":
-            self._send(200, {"success": True, "message": None, "data": TANKS})
+            self._send(200, {"success": True, "message": None,
+                             "data": tanks_for(self.username)})
             return
 
         parts = route.split("/")
@@ -359,11 +390,11 @@ class MockHandler(BaseHTTPRequestHandler):
         if method.endswith("sorgu"):
             with STORE.lock:
                 self._send(200, {"success": True, "message": None,
-                                 "data": list(STORE.tables[table])})
+                                 "data": self._mine(STORE.tables[table])})
         elif method.endswith("hiz"):
             with STORE.lock:
                 self._send(200, {"success": True, "message": None,
-                                 "data": list(STORE.tables[table])[:2]})
+                                 "data": self._mine(STORE.tables[table])[:2]})
         elif method == "save":
             self._save(table, body)
         elif method == "update":
@@ -374,6 +405,10 @@ class MockHandler(BaseHTTPRequestHandler):
             self._send(404, {"success": False, "message": "Bilinmeyen metot."})
 
     # ------------------------------------------------------------------
+    def _mine(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Yalnızca oturum açan lisansa ait kayıtlar."""
+        return [row for row in rows if row.get("kullanici") == self.username]
+
     def _login(self, body: Dict[str, Any]) -> None:
         username = str(body.get("username") or "")
         password = str(body.get("password") or "")
@@ -397,15 +432,16 @@ class MockHandler(BaseHTTPRequestHandler):
         return claims
 
     def _save(self, table: str, body: Dict[str, Any]) -> None:
-        error = validate(table, body)
+        error = validate(table, body, self.username)
         if error:
             self._send(200, {"success": False, "message": error})
             return
-        if duplicate_exists(table, body):
+        if duplicate_exists(table, body, username=self.username):
             self._send(200, {"success": False,
                              "message": "Mükerrer Kayıt Lütfen Kayıt Bilgilerinizi Kontrol Ediniz."})
             return
         record = dict(body)
+        record["kullanici"] = self.username
         record["id"] = str(uuid.uuid4()).upper()
         record["islemZamani"] = datetime.now().isoformat(timespec="seconds")
         with STORE.lock:
@@ -420,11 +456,11 @@ class MockHandler(BaseHTTPRequestHandler):
         if existing is None:
             self._send(200, {"success": False, "message": "Girilen ID Değeri Hatalıdır."})
             return
-        error = validate(table, body)
+        error = validate(table, body, self.username)
         if error:
             self._send(200, {"success": False, "message": error})
             return
-        if duplicate_exists(table, body, skip_id=record_id):
+        if duplicate_exists(table, body, skip_id=record_id, username=self.username):
             self._send(200, {"success": False,
                              "message": "Mükerrer Kayıt Lütfen Kayıt Bilgilerinizi Kontrol Ediniz."})
             return
