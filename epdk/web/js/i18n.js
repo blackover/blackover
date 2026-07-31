@@ -84,6 +84,16 @@ const DICT = {
     'dash.capacity': 'kapasite',
     'dash.moreTanks': 'tank daha',
 
+    'slot.title': 'DEP-1 Bildirim Döngüsü',
+    'slot.subtitle': 'Veriler tam saat (:00) ve buçuklarda (:30) gönderilir',
+    'slot.openSlot': 'Açık saat dilimi',
+    'slot.nextSlot': 'Sıradaki',
+    'slot.tanksReported': 'tank bildirildi',
+    'slot.allDone': 'Bu dilim tamam',
+    'slot.reported': 'bu dilim için bildirildi',
+    'slot.addNow': 'bu dilim için kayıt ekle',
+    'slot.noTankList': 'Tank listesi yüklenemedi',
+
     'table.emptyTitle': 'Kayıt bulunamadı',
     'table.emptyText': 'Bu tabloda gönderim süresi devam eden kayıt yok. Yeni bir kayıt ekleyebilirsiniz.',
     'table.noMatch': 'Aramanızla eşleşen kayıt yok.',
@@ -163,6 +173,9 @@ const DICT = {
     'session.expired': 'Oturum süresi doldu. Lütfen yeniden giriş yapın.',
     'session.expiringSoon': 'Oturum süresi azalıyor',
     'session.left': 'kaldı',
+    'session.badge': 'Oturum',
+    'session.badgeTitle': 'Oturum süresi — EPDK token ömrü 60 dakikadır. '
+      + 'Bu sayaç veri gönderim saatiyle ilgili değildir.',
   },
 
   en: {
@@ -248,6 +261,16 @@ const DICT = {
     'dash.capacity': 'capacity',
     'dash.moreTanks': 'more tanks',
 
+    'slot.title': 'DEP-1 submission cycle',
+    'slot.subtitle': 'Readings are sent on the hour (:00) and the half hour (:30)',
+    'slot.openSlot': 'Open slot',
+    'slot.nextSlot': 'Next',
+    'slot.tanksReported': 'tanks reported',
+    'slot.allDone': 'Slot complete',
+    'slot.reported': 'reported for this slot',
+    'slot.addNow': 'add a record for this slot',
+    'slot.noTankList': 'Tank list unavailable',
+
     'table.emptyTitle': 'No records',
     'table.emptyText': 'There are no records inside their submission window. You can add a new one.',
     'table.noMatch': 'No records match your search.',
@@ -327,6 +350,9 @@ const DICT = {
     'session.expired': 'Session expired. Please sign in again.',
     'session.expiringSoon': 'Session is about to expire',
     'session.left': 'left',
+    'session.badge': 'Session',
+    'session.badgeTitle': 'Session time — EPDK tokens last 60 minutes. '
+      + 'This countdown is unrelated to the submission schedule.',
   },
 };
 

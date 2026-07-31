@@ -109,9 +109,12 @@ function paintSession() {
 function paintToken() {
   const badge = document.getElementById('token-badge');
   const left = state.session.secondsLeft;
+  badge.title = t('session.badgeTitle');
   if (left === null || left === undefined) { badge.textContent = '—'; return; }
 
-  badge.textContent = `⏱ ${fmtDuration(left)}`;
+  // Rozet açıkça "Oturum" der; yarım saatlik gönderim döngüsüyle
+  // karıştırılmaması için (o sayaç panelde ayrı gösterilir).
+  badge.textContent = `${t('session.badge')} ${fmtDuration(left)}`;
   badge.classList.toggle('badge--danger', left <= 120);
   badge.classList.toggle('badge--warn', left > 120 && left <= 420);
 

@@ -216,12 +216,12 @@ export function openRecordForm({ spec, record = null, onDone }) {
   const initial = { ...(record || {}) };
 
   if (!editing) {
-    // Akıllı varsayılanlar
-    if (spec.fields.some((f) => f.name === 'saat')) initial.saat = nearestHalfHour();
-    if (spec.fields.some((f) => f.name === 'tarih')) initial.tarih = isoDate(0);
-    if (spec.fields.some((f) => f.name === 'gumrukDurumu') && !initial.gumrukDurumu) {
-      initial.gumrukDurumu = '1';
-    }
+    // Akıllı varsayılanlar — yalnızca çağıran bir değer vermediyse doldurulur
+    // (ör. eksik tank kısayolu formu belirli bir saat dilimiyle açar).
+    const has = (name) => spec.fields.some((f) => f.name === name);
+    if (has('saat') && !initial.saat) initial.saat = nearestHalfHour();
+    if (has('tarih') && !initial.tarih) initial.tarih = isoDate(0);
+    if (has('gumrukDurumu') && !initial.gumrukDurumu) initial.gumrukDurumu = '1';
   }
 
   const isDep1 = spec.key === 'dep1';

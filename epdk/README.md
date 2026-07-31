@@ -27,6 +27,8 @@ yazmak ve hataları servis reddettikten sonra öğrenmek gerekir. Bu uygulama:
   bir kayıt defterinde saklanır.
 - **Panelde grafiklerle özetler:** tank doluluk oranları, son 24 saatin stok
   seyri ve petrol türü bazında günlük depolama miktarları.
+- **Yarım saatlik döngüyü takip eder:** açık saat dilimini, sıradaki dilime
+  kalan süreyi ve o dilim için henüz bildirilmemiş tankları gösterir.
 
 ---
 
@@ -80,7 +82,7 @@ Kullanıcı adı biçimi: `WSU-` + lisans numaranız — örn. `WSU-DEP/444-2/01
 
 | Menü | İşlev |
 |---|---|
-| **Panel** | Üç tablonun açık kayıt sayıları, **grafikler**, son işlemler, oturum bilgileri |
+| **Panel** | Açık kayıt sayıları, **bildirim döngüsü**, **grafikler**, son işlemler |
 | **Tablo DEP-1** | Tank bazında saatlik stok bildirimi |
 | **Tablo DEP-2** | Verilen depolama hizmetleri + "Alınan Hizmetler" sorgusu |
 | **Tablo DR** | Alınan depolama hizmetleri + "Verilen Hizmetler" sorgusu |
@@ -89,7 +91,23 @@ Kullanıcı adı biçimi: `WSU-` + lisans numaranız — örn. `WSU-DEP/444-2/01
 | **İşlem Geçmişi** | Yapılan tüm servis çağrıları, istek/yanıt ayrıntısıyla |
 | **Ayarlar** | Dil, tema, zaman aşımı, onay tercihleri |
 
-### 3. Panel grafikleri
+### 3. Bildirim döngüsü (DEP-1)
+
+DEP-1 verisi yalnızca tam saat (**:00**) ve buçuklarda (**:30**) kabul edilir —
+16:00, 16:30, 17:00 … Uygulama bu döngüyü hem panelde hem DEP-1 sayfasının
+üstünde bir şeritte gösterir:
+
+- **Açık saat dilimi** — şu an hangi dilime kayıt gönderiliyor (ör. `14:00`).
+- **Sıradaki** — bir sonraki dilime kalan süre, saniye saniye geri sayar.
+  Dilim değiştiğinde liste ve tank durumu kendiliğinden tazelenir.
+- **Tank durumu** — lisansa kayıtlı tankların kaçı bu dilim için bildirildi.
+  Yeşil ✓ olanlar gönderilmiş, kesikli çerçeveli olanlar eksik demektir.
+  **Eksik tanka tıklayınca form o tank ve o saat dilimiyle açılır.**
+
+> Sağ üstteki **Oturum** rozeti bununla ilgili değildir; o, EPDK oturum
+> anahtarının (token) 60 dakikalık ömründen kalan süreyi gösterir.
+
+### 4. Panel grafikleri
 
 Panel, bildirimlerinizi üç grafikte özetler. Grafiklerin üzerine gelince
 ayrıntılı değerler görünür; açık ve koyu temada ayrı ayrı okunaklıdır.
@@ -104,7 +122,7 @@ Grafik renkleri renk körlüğüne karşı doğrulanmış bir palettendir; her s
 ayrıca gösterge ve doğrudan etiketle adlandırılır, yani bilgi yalnızca renge
 bağlı değildir.
 
-### 4. Kayıt işlemleri
+### 5. Kayıt işlemleri
 
 Her tablo sayfasında:
 
@@ -123,7 +141,7 @@ Her tablo sayfasında:
   geri getirebilirsiniz (kaydın tüm alanları 👁 **Ayrıntı** penceresinde de yer
   alır).
 
-### 5. Toplu yükleme (CSV)
+### 6. Toplu yükleme (CSV)
 
 **Toplu Yükle → Şablon indir** ile doğru başlıkları içeren bir CSV alın,
 Excel'de doldurun ve geri yükleyin. Dosyayı sürükleyip bırakabilir ya da
@@ -239,6 +257,7 @@ uygulamaya istek gönderemez.
 | `epdk/server.py` | Yerel HTTP sunucusu ve `/api` uçları |
 | `epdk/store.py` | SQLite kayıt defteri (parolalar maskelenir) |
 | `epdk/mock_service.py` | Deneme/eğitim için sahte EPDK servisi |
+| `epdk/web/js/slots.js` | Yarım saatlik bildirim döngüsü ve eksik tank takibi |
 | `epdk/web/js/charts.js` | Panel grafikleri (bağımlılıksız SVG) |
 | `epdk/web/` | Arayüz (bağımlılıksız HTML + CSS + ES modülleri) |
 

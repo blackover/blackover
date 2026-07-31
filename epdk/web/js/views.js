@@ -5,6 +5,9 @@ import { groupedBarChart, legendHtml, tankFillChart, trendChart } from './charts
 import { openRecordForm } from './form.js';
 import { pick, t, getLanguage } from './i18n.js';
 import { openImporter } from './importer.js';
+import {
+  currentSlotStatus, slotCardHtml, startSlotTicker, wireSlotCard,
+} from './slots.js';
 import { ensureLookups, gtipName, gumrukLabel, state, tableSpec } from './state.js';
 import {
   confirmDialog, copyText, download, emptyHtml, errorHtml, escapeHtml,
@@ -66,6 +69,16 @@ export async function renderDashboard(ctx) {
   view().innerHTML = `
     <div class="view__inner stack">
       <div class="grid grid--stats">${cards}</div>
+
+      <div class="card" id="slot-card">
+        <div class="card__head">
+          <div>
+            <h2 class="card__title">${escapeHtml(t('slot.title'))}</h2>
+            <p class="card__sub">${escapeHtml(t('slot.subtitle'))}</p>
+          </div>
+        </div>
+        <div id="slot-body"></div>
+      </div>
 
       <div class="grid grid--2">
         <div class="card">
@@ -157,6 +170,7 @@ export async function renderDashboard(ctx) {
     </div>`;
 
   drawCharts(payload);
+  paintSlotCard(() => renderDashboard(ctx), payload.summary?.dep1?.rows || []);
 
   view().querySelectorAll('[data-go]').forEach((button) =>
     button.addEventListener('click', () => ctx.navigate(button.dataset.go)));
@@ -170,6 +184,28 @@ export async function renderDashboard(ctx) {
         onDone: () => renderDashboard(ctx),
       });
     }));
+}
+
+/* --------------------------------------------------- bildirim döngüsü */
+
+let slotTicker = null;
+
+/**
+ * DEP-1 döngü kartını çizer ve saniyelik geri sayımı başlatır.
+ * @param {Function} reload  saat dilimi değişince ya da kayıt eklenince
+ * @param {Array} rows       DEP-1 kayıtları
+ * @param {string} hostId    kartın yerleştirileceği kap
+ */
+function paintSlotCard(reload, rows, hostId = 'slot-body') {
+  const host = document.getElementById(hostId);
+  if (!host) return;
+
+  const status = currentSlotStatus(rows);
+  host.innerHTML = slotCardHtml(status, { compact: hostId !== 'slot-body' });
+  wireSlotCard(host, status, reload);
+
+  slotTicker?.();
+  slotTicker = startSlotTicker(() => currentSlotStatus(rows), reload);
 }
 
 /* ------------------------------------------------------- panel grafikleri */
@@ -451,6 +487,7 @@ export async function renderTable(ctx, key) {
               ${escapeHtml(pick(spec.extra_query, 'label'))}
             </button>
           </div>` : ''}
+        ${spec.key === 'dep1' ? '<div id="slot-strip"></div>' : ''}
         <div id="table-content">${loadingHtml()}</div>
       </div>
     </div>`;
@@ -517,6 +554,8 @@ async function loadRecords(ctx, spec, ui) {
 
   const allColumns = columnsFor(spec);
   const refresh = () => loadRecords(ctx, spec, ui);
+
+  if (spec.key === 'dep1') paintSlotCard(refresh, rows, 'slot-strip');
   const paint = () => {
     const columns = allColumns.filter((column) => !ui.hidden.has(column.name));
     const filtered = sortRows(filterRows(rows, ui.search), ui.sort, ui.dir);
