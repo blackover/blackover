@@ -1,0 +1,44 @@
+# Control-law gains and limits for the cascaded autopilot.
+#
+# Each cascade stage is limited to something the aircraft can actually do, so
+# a large altitude error asks for a sustainable vertical speed rather than an
+# impossible pitch attitude.
+
+max_bank: "25.0 deg"
+max_pitch: "15.0 deg"
+max_vertical_speed: "2500 fpm"
+
+# How fast the autopilot may change its COMMANDED attitude. Limits the
+# cascade, not the airframe: a stepped inner target saturates the pitch loop.
+pitch_command_rate: "3.0 deg/s"
+
+gains:
+  # altitude error (m) -> vertical speed command (m/s), capped at
+  # max_vertical_speed
+  altitude_kp: 0.03
+  altitude_ki: 0.0
+
+  # vertical speed error (m/s) -> a small CORRECTION to the feed-forward
+  # pitch of gamma + alpha. Not the whole pitch command.
+  vs_kp: 0.0035
+  vs_ki: 0.0018
+
+  # pitch error (rad) -> elevator
+  pitch_kp: 3.4
+  pitch_ki: 0.9
+  pitch_kd: 0.55
+
+  # heading error (rad) -> bank command (rad)
+  heading_kp: 1.3
+
+  # bank error (rad) -> aileron
+  roll_kp: 2.1
+  roll_ki: 0.12
+  roll_kd: 0.30
+
+  # speed error (m/s) -> throttle
+  speed_kp: 0.050
+  speed_ki: 0.011
+
+  # sideslip -> rudder; the yaw damper that stops the Dutch roll wallowing
+  yaw_damper: 2.6

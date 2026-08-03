@@ -1,0 +1,28 @@
+# Operating limits, authored independently of aerodynamics.yaml so the derived
+# stall speed can be cross-checked against the quoted one.
+
+# VMO is set below the airframe's structural capability on purpose: the
+# aerodynamic model is high-subsonic only, and an operating limit the model
+# cannot actually support would be a limit in name alone.
+vmo: "600 kt"
+mmo: 0.95
+max_operating_altitude: "15000 m"
+
+stall_speed_clean: "138 kt"
+stall_reference_mass: "12000 kg"
+stall_speed_landing: "124 kt"
+
+vfe: "250 kt"
+vle: "300 kt"
+vlo: "300 kt"
+
+load_factor_positive: 9.0
+load_factor_negative: -3.0
+load_factor_positive_stores: 5.5
+
+max_touchdown_rate: "5.0 m/s"
+max_crosswind: "30 kt"
+max_tailwind: "10 kt"
+
+max_bank_normal: "90 deg"
+max_pitch_normal: "60 deg"

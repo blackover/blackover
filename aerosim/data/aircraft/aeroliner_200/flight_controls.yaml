@@ -1,0 +1,28 @@
+# Surface travel, rate limits and actuator lag.
+#
+# The aerodynamic derivatives are quoted per unit of NORMALISED deflection, so
+# max_deflection here sets what "1.0" physically means and is used to convert
+# the quoted deg/s rate into normalised travel per second.
+
+elevator:
+  max_deflection: "25.0 deg"
+  max_rate: "40.0 deg/s"
+  time_constant: "0.06 s"
+
+aileron:
+  max_deflection: "20.0 deg"
+  max_rate: "60.0 deg/s"
+  time_constant: "0.05 s"
+
+rudder:
+  max_deflection: "25.0 deg"
+  max_rate: "45.0 deg/s"
+  time_constant: "0.07 s"
+
+flaps:
+  max_deflection: "40.0 deg"
+  transit_time: "14.0 s"
+  detents: [0.0, 0.25, 0.50, 0.75, 1.0]
+
+speedbrake:
+  transit_time: "2.5 s"

@@ -1,0 +1,41 @@
+# Single augmented low-bypass turbofan.
+#
+# Thrust is an algebraic map of N1, density ratio and Mach with first-order
+# spool dynamics. Not a cycle deck: no compressor stall, no surge, no thermal
+# transient. EGT is indicative only.
+
+engine_type: augmented low-bypass turbofan
+engine_count: 1
+max_thrust_per_engine: "79.0 kn"
+
+spool_up_time: "3.0 s"
+spool_down_time: "2.4 s"
+idle_thrust_fraction: 0.055
+density_exponent: 0.90
+
+specific_fuel_consumption: 2.27e-5
+
+thrust_angle: "0.0 deg"
+
+# On the centreline and aft, so an engine failure produces no yawing moment --
+# the failure case that dominates the twin is simply absent here, and the one
+# that replaces it is that there is no second engine.
+positions:
+  - { x: "-3.20 m", y: "0.0 m", z: "0.00 m" }
+
+# A military engine recovers ram pressure well past M 1, so thrust rises with
+# speed rather than falling away as it does on the high-bypass transport.
+mach_thrust_table:
+  range: clamp
+  breakpoints: [0.00, 0.40, 0.80, 1.20, 1.60, 2.00]
+  values: [1.000, 1.020, 1.120, 1.300, 1.450, 1.400]
+
+# Thrust augmentation. A generic thrust and fuel-flow multiplier representing
+# no specific technology, deliberately non-representative of any real system.
+# Available only above 85 % throttle, which is what makes the detent feel like
+# a detent.
+afterburner:
+  available: true
+  thrust_factor: 1.63
+  fuel_factor: 2.40
+  spool_time: "1.2 s"

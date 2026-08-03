@@ -1,0 +1,55 @@
+name: aeroliner_200
+display_name: AeroLiner-200
+version: "1.2.0"
+category: passenger
+role: short-to-medium-haul narrow-body airliner
+
+description: >-
+  Generic twin-turbofan narrow-body of 79 t maximum take-off mass. A fictional
+  configuration assembled from open literature and first-principles estimates.
+  No manufacturer data, nothing proprietary, nothing export-controlled, and no
+  correlation with any real aircraft type is claimed or implied.
+
+provenance:
+  author: AeroSim Lab
+  method: handbook estimation and closed-form first principles
+  validated_envelope: >-
+    0 to 12 500 m, 60 to 180 m/s TAS, M 0.0 to 0.82, flaps 0 to 40 deg.
+    Behaviour outside this envelope is not representative.
+
+# Per-section source, confidence and assumptions. A stability derivative
+# estimated by handbook methods and one measured in flight test are not the
+# same artefact and are not presented as though they were.
+sections:
+  geometry:
+    source: first-principles sizing for the stated aspect ratio and mass
+    confidence: high
+    assumptions: reference area is the trapezoidal wing planform to the centreline
+  mass_properties:
+    source: scaled from published inertia data for aircraft of this class
+    confidence: medium
+    assumptions: inertia quoted about the empty centre of gravity, body axes
+  aerodynamics:
+    source: DATCOM-style handbook build-up
+    confidence: medium
+    assumptions: >-
+      linear lateral-directional derivatives, quasi-steady flow, no
+      aeroelastic correction, no Reynolds number scaling
+  propulsion:
+    source: algebraic thrust map fitted to a 120 kN class turbofan
+    confidence: low
+    assumptions: >-
+      not a cycle deck; EGT is indicative only and is not a temperature
+      prediction
+  landing_gear:
+    source: static deflection and damping ratio chosen for numerical stability
+    confidence: low
+    assumptions: >-
+      touchdown loads are indicative, not structural; no anti-skid, no oleo
+      gas curve
+
+cross_validation: >-
+  Stall speed is computed from CL_max derived in aerodynamics.yaml and wing
+  area from geometry.yaml, then compared against stall_speed_clean quoted
+  independently in limitations.yaml. Three separately authored files agreeing
+  is evidence; a model agreeing with itself would not be.

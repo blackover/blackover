@@ -1,0 +1,36 @@
+# Body axes: origin at the aerodynamic reference point, x FORWARD, z DOWN.
+#
+# Short, stiff struts on a narrow track. The main wheels sit 2.05 m below the
+# reference point against a 4.73 m wing semi-span, so the wingtip reaches the
+# ground at about 26 degrees of bank -- roughly twice the transport's margin,
+# which is the geometric reason a fighter can be landed in a crosswind with a
+# wing down and an airliner cannot.
+
+static_deflection: "0.14 m"
+damping_ratio: 0.60
+
+rolling_friction: 0.022
+brake_friction: 0.50
+side_friction: 0.72
+max_steer_angle: "32.0 deg"
+transit_time: "6.0 s"
+
+gear:
+  - name: nose
+    position: { x: "3.60 m", y: "0.0 m", z: "1.85 m" }
+    load_share: 0.11
+    max_travel: "0.30 m"
+    steerable: true
+    braked: false
+  - name: left_main
+    position: { x: "-0.35 m", y: "-1.15 m", z: "2.05 m" }
+    load_share: 0.445
+    max_travel: "0.34 m"
+    steerable: false
+    braked: true
+  - name: right_main
+    position: { x: "-0.35 m", y: "1.15 m", z: "2.05 m" }
+    load_share: 0.445
+    max_travel: "0.34 m"
+    steerable: false
+    braked: true

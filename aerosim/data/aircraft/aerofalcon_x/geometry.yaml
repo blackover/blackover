@@ -1,0 +1,26 @@
+# COORDINATE CONVENTION
+# True body axes: origin at the aerodynamic reference point (quarter mean
+# chord), x FORWARD, y RIGHT, z DOWN, metres. See aeroliner_200/geometry.yaml
+# for why this is not the aft-increasing fuselage-station convention.
+#
+# Aspect ratio 3.20 falls out of span^2 / area. The low aspect ratio is what
+# gives this aircraft its high induced drag, its high stall angle and its
+# very high roll rate relative to the transport.
+
+wing_area: "27.90 m2"
+wing_span: "9.45 m"
+mean_chord: "3.45 m"
+
+aero_reference_x: "0.0 m"
+
+fuselage_length: "15.10 m"
+fuselage_diameter: "1.60 m"
+tail_height: "5.10 m"
+
+wing_sweep_quarter_chord: "40.0 deg"
+wing_dihedral: "0.0 deg"
+wing_incidence: "0.0 deg"
+
+horizontal_tail_area: "5.90 m2"
+vertical_tail_area: "5.10 m2"
+tail_arm: "4.90 m"

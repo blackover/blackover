@@ -1,0 +1,36 @@
+# Body axes: origin at the aerodynamic reference point, x FORWARD, z DOWN.
+#
+# Strut stiffness is specified indirectly, as the static deflection the strut
+# should show under its share of the aircraft's own weight, and damping as a
+# fraction of critical. That places the ground mode near 3 Hz, comfortably
+# inside a 100 Hz kernel step -- specifying a bare N/m instead is how explicit
+# integrators end up bouncing aircraft down the runway.
+
+static_deflection: "0.20 m"
+damping_ratio: 0.55
+
+rolling_friction: 0.018
+brake_friction: 0.42
+side_friction: 0.65
+max_steer_angle: "70.0 deg"
+transit_time: "11.0 s"
+
+gear:
+  - name: nose
+    position: { x: "12.60 m", y: "0.0 m", z: "3.05 m" }
+    load_share: 0.08
+    max_travel: "0.42 m"
+    steerable: true
+    braked: false
+  - name: left_main
+    position: { x: "-1.30 m", y: "-3.80 m", z: "3.25 m" }
+    load_share: 0.46
+    max_travel: "0.48 m"
+    steerable: false
+    braked: true
+  - name: right_main
+    position: { x: "-1.30 m", y: "3.80 m", z: "3.25 m" }
+    load_share: 0.46
+    max_travel: "0.48 m"
+    steerable: false
+    braked: true

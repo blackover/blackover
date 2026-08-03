@@ -1,0 +1,35 @@
+# Control-law gains and limits.
+#
+# Higher gains than the transport because the airframe responds faster: the
+# same gains on this aircraft's much smaller roll inertia would be sluggish,
+# and the transport's gains on this airframe would oscillate.
+
+max_bank: "45.0 deg"
+max_pitch: "25.0 deg"
+max_vertical_speed: "12000 fpm"
+
+# How fast the autopilot may change its COMMANDED attitude. Limits the
+# cascade, not the airframe: a stepped inner target saturates the pitch loop.
+pitch_command_rate: "6.0 deg/s"
+
+gains:
+  altitude_kp: 0.045
+  altitude_ki: 0.0
+
+  vs_kp: 0.0045
+  vs_ki: 0.0025
+
+  pitch_kp: 2.6
+  pitch_ki: 1.1
+  pitch_kd: 0.45
+
+  heading_kp: 2.0
+
+  roll_kp: 3.0
+  roll_ki: 0.18
+  roll_kd: 0.25
+
+  speed_kp: 0.045
+  speed_ki: 0.010
+
+  yaw_damper: 2.0

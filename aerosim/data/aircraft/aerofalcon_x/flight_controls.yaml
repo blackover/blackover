@@ -1,0 +1,28 @@
+# Surface travel, rate limits and actuator lag.
+#
+# Rates are roughly double the transport's. Surface rate is what separates an
+# aircraft that follows the stick from one that lags behind it, and it is also
+# what a hydraulic failure takes away first.
+
+elevator:
+  max_deflection: "25.0 deg"
+  max_rate: "60.0 deg/s"
+  time_constant: "0.035 s"
+
+aileron:
+  max_deflection: "21.5 deg"
+  max_rate: "80.0 deg/s"
+  time_constant: "0.030 s"
+
+rudder:
+  max_deflection: "30.0 deg"
+  max_rate: "120.0 deg/s"
+  time_constant: "0.035 s"
+
+flaps:
+  max_deflection: "20.0 deg"
+  transit_time: "5.0 s"
+  detents: [0.0, 0.5, 1.0]
+
+speedbrake:
+  transit_time: "1.5 s"

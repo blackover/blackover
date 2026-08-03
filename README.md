@@ -1,3 +1,9 @@
+> This repository holds two independent projects:
+> **[AeroSim Lab](aerosim/README.md)** — a flight simulator you fly like a game
+> (`python -m aerosim`), and the XRP signal app documented below.
+
+---
+
 # XRP Buy/Sell Predictor
 
 An automatic short-term **BUY / SELL / HOLD** signal app for XRP.

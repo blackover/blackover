@@ -1,0 +1,35 @@
+# Algebraic thrust map with first-order spool dynamics.
+# This is not a thermodynamic cycle deck: no compressor stall, no surge, no
+# thermal transient, no bleed effect. EGT is an indicative linear function of
+# N1 and must not be read as a temperature prediction.
+
+engine_type: high-bypass turbofan
+engine_count: 2
+max_thrust_per_engine: "120.0 kn"
+
+spool_up_time: "4.5 s"
+spool_down_time: "3.0 s"
+idle_thrust_fraction: 0.045
+density_exponent: 0.85
+
+# Thrust specific fuel consumption, kg of fuel per second per newton.
+specific_fuel_consumption: 1.62e-5
+
+thrust_angle: "2.0 deg"
+
+# Body axes, origin at the aerodynamic reference point. Underwing pylons sit
+# forward of and below it, which is what produces the pitch-up couple on
+# thrust application and the yawing moment when one engine fails.
+positions:
+  - { x: "1.90 m", y: "-5.75 m", z: "1.40 m" }
+  - { x: "1.90 m", y: "5.75 m", z: "1.40 m" }
+
+# Thrust lapse with Mach: ram recovery does not offset the intake and nozzle
+# losses for a high-bypass engine, so thrust falls away with speed.
+mach_thrust_table:
+  range: clamp
+  breakpoints: [0.00, 0.20, 0.40, 0.60, 0.80, 0.90]
+  values: [1.000, 0.895, 0.825, 0.788, 0.780, 0.792]
+
+afterburner:
+  available: false

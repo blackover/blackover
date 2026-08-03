@@ -1,0 +1,66 @@
+# Stability and control derivatives, body axes, per radian and per unit of
+# normalised control deflection (1.0 = full travel per flight_controls.yaml).
+#
+# Confidence in this section is LOW. A fighter spends much of its useful
+# envelope at the high angles of attack and sideslip where a linear
+# lateral-directional build-up is least trustworthy, and there is no departure
+# or spin model to catch it. Treat handling above the stall as illustrative.
+
+lift:
+  cl0: 0.05
+  cl_alpha: "3.45 1/rad"
+  cl_q: "3.50 1/rad"
+  cl_de: 0.30
+  # High stall angle is a consequence of the low aspect ratio and the leading
+  # edge strakes, not of any high-lift scheduling, which is not modelled.
+  alpha_stall: "22.0 deg"
+
+drag:
+  cd0: 0.0180
+  oswald_efficiency: 0.75
+  cd_de: 0.030
+  cd_gear: 0.028
+  cd_speedbrake: 0.070
+  # Parasite drag of a fully loaded pylon set, applied as a configuration
+  # increment at set-up time rather than as a control.
+  cd_stores: 0.0075
+  mach_drag_table:
+    range: clamp
+    breakpoints: [0.00, 0.60, 0.80, 0.86, 0.90, 0.95, 1.05]
+    values: [0.0000, 0.0000, 0.0012, 0.0060, 0.0170, 0.0330, 0.0450]
+
+pitch:
+  cm0: 0.010
+  cm_alpha: "-0.40 1/rad"
+  cm_q: "-5.50 1/rad"
+  cm_de: -1.10
+
+lateral:
+  cy_beta: "-1.05 1/rad"
+  cy_dr: 0.200
+  cl_beta: "-0.075 1/rad"
+  cl_p: "-0.300 1/rad"
+  cl_r: "0.080 1/rad"
+  # Sized for a steady-roll pb/2V near 0.14 at full deflection, which with the
+  # short span gives roughly 330 deg/s at 200 m/s.
+  cl_da: 0.042
+  cl_dr: 0.008
+  cn_beta: "0.130 1/rad"
+  cn_p: "-0.020 1/rad"
+  cn_r: "-0.320 1/rad"
+  cn_da: 0.003
+  cn_dr: -0.075
+  beta_max: "20.0 deg"
+
+flaps:
+  delta_cl_max: 0.42
+  delta_cd_max: 0.075
+  delta_cm_max: -0.045
+  delta_alpha_stall_max: "-2.0 deg"
+
+# The aerodynamic model is high-subsonic only. Above this Mach there is no
+# transonic pitch-up, no shock-induced separation and no supersonic term, so
+# the envelope monitor raises a caution rather than letting the model produce
+# confident nonsense. This is the limitation that constrains what this
+# aircraft can legitimately be used to study.
+mach_validated_max: 0.85

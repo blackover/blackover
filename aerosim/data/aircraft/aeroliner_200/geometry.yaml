@@ -1,0 +1,28 @@
+# Reference geometry. Aspect ratio 9.44 falls out of span^2 / area.
+#
+# COORDINATE CONVENTION
+# All positions in this package are true body axes: origin at the aerodynamic
+# reference point (quarter mean chord), x FORWARD, y RIGHT, z DOWN, metres.
+# This is deliberately not the aft-increasing fuselage-station convention used
+# on loading sheets -- mixing the two silently reverses every moment arm in the
+# aircraft, and the reversal produces a model that still flies.
+
+wing_area: "124.6 m2"
+wing_span: "34.30 m"
+mean_chord: "3.63 m"
+
+# Moments from the aerodynamic tables are quoted about this point and
+# transferred to the current centre of gravity at run time.
+aero_reference_x: "0.0 m"
+
+fuselage_length: "37.60 m"
+fuselage_diameter: "3.95 m"
+tail_height: "11.80 m"
+
+wing_sweep_quarter_chord: "25.0 deg"
+wing_dihedral: "5.0 deg"
+wing_incidence: "1.5 deg"
+
+horizontal_tail_area: "31.0 m2"
+vertical_tail_area: "21.5 m2"
+tail_arm: "15.2 m"

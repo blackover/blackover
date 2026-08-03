@@ -1,0 +1,65 @@
+# Stability and control derivatives, body axes, per radian and per unit of
+# normalised control deflection (1.0 = full travel as declared in
+# flight_controls.yaml).
+#
+# Lateral-directional terms are linear in sideslip. There is no lateral stall,
+# no departure and no spin model, so beyond beta_max the model produces smooth,
+# plausible, incorrect numbers -- which is why beta_max is declared and the
+# envelope monitor raises a caution rather than the model failing silently.
+
+lift:
+  cl0: 0.30
+  cl_alpha: "5.70 1/rad"
+  cl_q: "6.00 1/rad"
+  cl_de: 0.35
+  alpha_stall: "14.0 deg"
+  # No explicit cl_table: the curve is synthesised from cl0, cl_alpha and
+  # alpha_stall. Post-stall lift is representative in shape but not validated
+  # in magnitude. Supplying a measured cl_table here would be preferable.
+
+drag:
+  cd0: 0.0215
+  oswald_efficiency: 0.80
+  cd_de: 0.020
+  cd_gear: 0.020
+  cd_speedbrake: 0.045
+  mach_drag_table:
+    range: clamp
+    breakpoints: [0.00, 0.60, 0.72, 0.78, 0.82, 0.86, 0.90, 0.95]
+    values: [0.0000, 0.0000, 0.0004, 0.0018, 0.0052, 0.0140, 0.0310, 0.0520]
+
+pitch:
+  cm0: 0.050
+  cm_alpha: "-1.30 1/rad"
+  cm_q: "-24.0 1/rad"
+  cm_de: -1.30
+
+lateral:
+  cy_beta: "-0.90 1/rad"
+  cy_dr: 0.190
+  cl_beta: "-0.130 1/rad"
+  cl_p: "-0.450 1/rad"
+  cl_r: "0.120 1/rad"
+  # Sized for a steady-roll pb/2V of about 0.093 at full deflection, which is
+  # the handbook figure for a transport. Quoting a bare Cl_da instead makes it
+  # very easy to end up with an airliner that rolls like a fighter.
+  cl_da: 0.042
+  cl_dr: 0.012
+  cn_beta: "0.120 1/rad"
+  cn_p: "-0.055 1/rad"
+  cn_r: "-0.200 1/rad"
+  cn_da: -0.006
+  cn_dr: -0.095
+  beta_max: "20.0 deg"
+
+# Mach above which the compressibility treatment stops being representative.
+# Prandtl-Glauert plus a drag rise does not reproduce Mach tuck, shock-induced
+# separation or aileron reversal, so the envelope monitor raises a caution
+# here rather than letting the model produce confident nonsense.
+mach_validated_max: 0.86
+
+flaps:
+  delta_cl_max: 0.90
+  delta_cd_max: 0.110
+  delta_cm_max: -0.100
+  delta_alpha_stall_max: "-4.0 deg"

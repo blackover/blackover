@@ -1,0 +1,7 @@
+# AeroSim Lab flight simulator
+pygame>=2.5
+numpy>=1.24
+PyYAML>=6.0
+
+# Tests only
+pytest>=7.4

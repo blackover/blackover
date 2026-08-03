@@ -1,0 +1,28 @@
+# Operating limits. These are authored independently of aerodynamics.yaml so
+# that the derived stall speed can be checked against the quoted one -- three
+# separately authored files agreeing is evidence; a model agreeing with itself
+# is not.
+
+vmo: "340 kt"
+mmo: 0.82
+max_operating_altitude: "12500 m"
+
+# Quoted at the reference landing mass below, clean configuration, 1 g.
+stall_speed_clean: "138 kt"
+stall_reference_mass: "66000 kg"
+stall_speed_landing: "112 kt"
+
+vfe: "185 kt"
+vle: "250 kt"
+vlo: "220 kt"
+
+load_factor_positive: 2.5
+load_factor_negative: -1.0
+load_factor_positive_flaps: 2.0
+
+max_touchdown_rate: "3.7 m/s"
+max_crosswind: "33 kt"
+max_tailwind: "10 kt"
+
+max_bank_normal: "30 deg"
+max_pitch_normal: "20 deg"

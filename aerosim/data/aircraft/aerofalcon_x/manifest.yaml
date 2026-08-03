@@ -1,0 +1,59 @@
+name: aerofalcon_x
+display_name: AeroFalcon-X
+version: "1.0.0"
+category: military
+role: single-seat multirole fighter
+
+description: >-
+  Generic single-engine multirole fighter of 19.2 t maximum take-off mass with
+  a low-aspect-ratio wing, thrust augmentation and a high manoeuvre envelope.
+  A fictional configuration assembled from open literature and first-principles
+  estimates. No manufacturer data, nothing proprietary, nothing export
+  controlled, and no correlation with any real aircraft type is claimed.
+
+  This package models the AIRFRAME only -- mass, aerodynamics, propulsion,
+  structure and handling. It carries no weapon, sensor, targeting or mission
+  system of any kind. External stores appear solely as the mass and parasite
+  drag of a loaded pylon, because that is the part which changes how the
+  aircraft flies.
+
+provenance:
+  author: AeroSim Lab
+  method: handbook estimation and closed-form first principles
+  validated_envelope: >-
+    0 to 15 000 m, 60 to 300 m/s TAS, M 0.0 to 0.85, alpha to 22 deg.
+    The aerodynamic model is high-subsonic only. It contains no transonic
+    pitch-up, no shock-induced separation and no supersonic terms, so nothing
+    it produces above M 0.85 is representative -- see docs/known_limitations.
+
+sections:
+  geometry:
+    source: first-principles sizing for aspect ratio 3.20
+    confidence: high
+    assumptions: reference area is the trapezoidal planform including the strakes
+  mass_properties:
+    source: >-
+      inertia scaled from open published values for fighters of this class,
+      converted from slug ft2
+    confidence: medium
+    assumptions: quoted about the empty centre of gravity, body axes
+  aerodynamics:
+    source: DATCOM-style handbook build-up
+    confidence: low
+    assumptions: >-
+      linear lateral-directional derivatives, quasi-steady flow, no leading
+      edge device scheduling, no departure or spin model. A fighter spends
+      much of its envelope in exactly the high-alpha, high-beta region this
+      model represents least well, so the confidence rating is low and the
+      envelope monitor is the primary safeguard.
+  propulsion:
+    source: algebraic thrust map fitted to a 79 kN dry class augmented turbofan
+    confidence: low
+    assumptions: >-
+      thrust augmentation is a generic thrust and fuel-flow multiplier. It
+      represents no specific technology and is deliberately non-representative
+      of any real system.
+  landing_gear:
+    source: static deflection and damping ratio chosen for numerical stability
+    confidence: low
+    assumptions: touchdown loads are indicative, not structural

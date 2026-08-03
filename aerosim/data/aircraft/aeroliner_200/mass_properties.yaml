@@ -1,0 +1,45 @@
+# Body axes: origin at the aerodynamic reference point, x FORWARD, y RIGHT,
+# z DOWN. See the convention note in geometry.yaml.
+
+empty_mass: "42600 kg"
+max_takeoff_mass: "79000 kg"
+max_landing_mass: "66000 kg"
+max_payload: "20500 kg"
+
+# Inertia about the empty centre of gravity, body axes.
+# The triangle inequality ixx + iyy >= izz is checked at load time: violate it
+# and the tensor describes no rigid body that exists.
+inertia:
+  ixx: "1.60e6 kgm2"
+  iyy: "3.20e6 kgm2"
+  izz: "4.60e6 kgm2"
+  ixz: "1.40e5 kgm2"
+
+# Empty CG sits essentially on the aerodynamic reference point, which is what
+# makes the quoted cm_alpha of -1.30 /rad correspond to the stated 22.8 % MAC
+# static margin at zero load. Loading moves it, and the stability changes with
+# it, because the moment transfer is computed rather than assumed.
+empty_cg:
+  x: "0.05 m"
+  y: "0.0 m"
+  z: "0.10 m"
+
+payload_cg:
+  x: "-0.20 m"
+  y: "0.0 m"
+  z: "0.30 m"
+
+# CG envelope, roughly 15 % to 35 % MAC about the reference point.
+cg_forward_limit: "0.40 m"
+cg_aft_limit: "-0.35 m"
+
+tanks:
+  - name: centre
+    capacity: "8200 kg"
+    position: { x: "-0.10 m", y: "0.0 m", z: "0.55 m" }
+  - name: left_wing
+    capacity: "5300 kg"
+    position: { x: "-0.35 m", y: "-6.80 m", z: "0.30 m" }
+  - name: right_wing
+    capacity: "5300 kg"
+    position: { x: "-0.35 m", y: "6.80 m", z: "0.30 m" }
