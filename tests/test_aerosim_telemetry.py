@@ -329,6 +329,7 @@ class TestReplayRendering:
         import pygame
 
         from aerosim.core.frames import dcm_body_to_ned
+        from aerosim.env.terrain import flat_terrain
         from aerosim.game.mesh import build_mesh
         from aerosim.game.renderer import Renderer, Runway, Sky
 
@@ -344,7 +345,7 @@ class TestReplayRendering:
         renderer.resize_view(pygame.Rect(0, 0, 640, 340))
         renderer.camera.follow(session.fdm.state, 1 / 60)
         renderer.draw_sky()
-        renderer.draw_terrain(session.fdm.state, 0.0, Runway())
+        renderer.draw_terrain(session.fdm.state, flat_terrain(), Runway())
         renderer.draw_aircraft(
             session.fdm.state,
             build_mesh(model),
@@ -366,3 +367,47 @@ class TestReplayRendering:
         # interface, or every viewer would need a replay-specific branch.
         panel = Panel(pygame.Rect(0, 340, 640, 140), Fonts(1.0), model, session)
         panel.draw(screen, session)
+
+
+class TestReplayTerrain:
+    def test_replay_rebuilds_the_identical_landscape(self, model, tmp_path):
+        # The heightfield is a pure function of (seed, profile, elevation), so
+        # it is not stored in the telemetry -- the replay rebuilds it from the
+        # manifest. If that round trip loses anything, a recorded flight is
+        # shown over ground it never flew over, which is exactly the failure
+        # that sharing one Terrain between the renderer and the flight model
+        # was meant to make impossible.
+        conditions = SimConditions(
+            aircraft=model.name,
+            start_mode=StartMode.AIRBORNE,
+            terrain="mountainous",
+            seed=23,
+            field_elevation=310.0,
+        )
+        sim, _ = fly_and_record(model, tmp_path / "run", conditions=conditions)
+        session = ReplaySession(model, load_run(tmp_path / "run"))
+
+        assert session.conditions.terrain == "mountainous"
+        assert session.conditions.seed == 23
+
+        rng = np.random.default_rng(9)
+        north = rng.uniform(-80_000.0, 80_000.0, 400)
+        east = rng.uniform(-80_000.0, 80_000.0, 400)
+        assert np.array_equal(
+            sim.terrain.heights(north, east), session.terrain.heights(north, east)
+        )
+
+    def test_replay_exposes_the_engines_the_viewer_reads(self, model, tmp_path):
+        # The exhaust plume is drawn from spool speed and the reheat flag, and
+        # it is drawn by the same code for a replay as for a live flight. That
+        # only works if a session answers to the same attribute name.
+        sim, _ = fly_and_record(model, tmp_path / "run")
+        session = ReplaySession(model, load_run(tmp_path / "run"))
+        session.apply(session.run.rows - 1)
+
+        assert session.propulsion is session.fdm.propulsion
+        assert len(session.propulsion.engines) == len(sim.fdm.propulsion.engines)
+        for replayed, flown in zip(
+            session.propulsion.engines, sim.fdm.propulsion.engines
+        ):
+            assert replayed.n1 == pytest.approx(flown.n1, abs=1e-3)

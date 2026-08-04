@@ -127,6 +127,22 @@ def quat_derivative(q: np.ndarray, omega_body: np.ndarray) -> np.ndarray:
     return 0.5 * quat_multiply(q, omega_quat)
 
 
+def cross3(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Cross product of two three-element vectors.
+
+    ``np.cross`` is general: it broadcasts, it accepts an axis argument, and
+    it reaches ``moveaxis`` and ``normalize_axis_tuple`` before it multiplies
+    anything. On three-element vectors that dispatch costs about twenty times
+    the arithmetic, and this runs once per strut per RK4 stage. Written out,
+    it was the largest single line in the physics profile.
+    """
+    a0, a1, a2 = a[0], a[1], a[2]
+    b0, b1, b2 = b[0], b[1], b[2]
+    return np.array(
+        [a1 * b2 - a2 * b1, a2 * b0 - a0 * b2, a0 * b1 - a1 * b0]
+    )
+
+
 # --------------------------------------------------------------------------
 # Aerodynamic angles
 # --------------------------------------------------------------------------

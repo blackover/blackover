@@ -576,7 +576,7 @@ class TestRenderer:
         renderer.resize_view(pygame.Rect(0, 0, 800, 420))
         renderer.camera.follow(sim.fdm.state, 1 / 60)
         renderer.draw_sky()
-        renderer.draw_terrain(sim.fdm.state, 0.0, Runway())
+        renderer.draw_terrain(sim.fdm.state, sim.terrain, Runway())
         renderer.draw_aircraft(
             sim.fdm.state, build_mesh(model), dcm_body_to_ned(sim.fdm.state.quaternion)
         )
@@ -600,13 +600,79 @@ class TestRenderer:
         for _ in range(10):
             renderer.camera.follow(sim.fdm.state, 1 / 60)
             renderer.draw_sky()
-            renderer.draw_terrain(sim.fdm.state, 0.0, Runway())
+            renderer.draw_terrain(sim.fdm.state, sim.terrain, Runway())
             renderer.draw_aircraft(
                 sim.fdm.state,
                 build_mesh(model),
                 dcm_body_to_ned(sim.fdm.state.quaternion),
             )
         assert np.array_equal(sim.fdm.state.x, before)
+
+    def test_terrain_rings_overlap_rather_than_leaving_a_gap(self):
+        # Each ring snaps its grid to its own cell size, so two rings are never
+        # aligned with each other. A hollow measured in the coarse ring's own
+        # cells therefore lands up to a full coarse cell off the fine ring's
+        # real footprint, and the base plane shows through the difference as a
+        # band of bare ground straight across the middle distance.
+        #
+        # The invariant: everything the coarse ring hollows out is inside what
+        # the fine ring actually paints, for every possible misalignment.
+        from aerosim.game.renderer import RING_CELLS, RING_FACTOR, RING_LEVELS
+
+        base = 137.0  # a cell size that snaps to nothing convenient
+        for level in range(1, RING_LEVELS):
+            fine = base * RING_FACTOR ** (level - 1)
+            coarse = base * RING_FACTOR**level
+            hole = RING_CELLS * fine - coarse
+
+            for offset in np.linspace(0.0, coarse, 23):
+                # Where the fine ring's vertices actually fall for this offset.
+                fine_origin = math.floor(offset / fine)
+                fine_low = (fine_origin - RING_CELLS) * fine
+                fine_high = (fine_origin + RING_CELLS + 1) * fine
+
+                # Every coarse cell whose whole extent is nearer than `hole` is
+                # dropped; the furthest such cell must still be painted by the
+                # fine ring.
+                coarse_origin = math.floor(offset / coarse)
+                for index in range(2 * RING_CELLS + 1):
+                    low = (coarse_origin - RING_CELLS + index) * coarse
+                    reach = max(abs(low - offset), abs(low + coarse - offset))
+                    if reach < hole:
+                        assert fine_low <= low
+                        assert low + coarse <= fine_high
+
+    def test_terrain_ring_grid_is_reused_until_the_aircraft_crosses_a_cell(
+        self, screen, model
+    ):
+        import pygame
+
+        from aerosim.game.renderer import Renderer, Sky
+
+        sim = Simulation(
+            model,
+            SimConditions(aircraft=model.name, altitude=ft(9000), terrain="hilly"),
+        )
+        run(sim, 2.0)
+
+        renderer = Renderer(screen, Sky(12.0, 30000.0))
+        renderer.resize_view(pygame.Rect(0, 0, 800, 420))
+        renderer.camera.follow(sim.fdm.state, 1 / 60)
+        renderer.draw_terrain(sim.fdm.state, sim.terrain, None)
+        grids = {key: value[1] for key, value in renderer._ring_cache.items()}
+        assert grids
+
+        renderer.draw_terrain(sim.fdm.state, sim.terrain, None)
+        # Same position, same grid object -- the heightfield is not re-evaluated.
+        for key, grid in grids.items():
+            assert renderer._ring_cache[key][1] is grid
+
+        # Far enough to cross every cell boundary: the grids must move with it.
+        sim.fdm.state.x[0] += 400_000.0
+        renderer.camera.follow(sim.fdm.state, 1 / 60)
+        renderer.draw_terrain(sim.fdm.state, sim.terrain, None)
+        for key, grid in grids.items():
+            assert renderer._ring_cache[key][1] is not grid
 
     def test_panel_draws_for_both_aircraft(self, screen, model):
         import pygame
@@ -627,3 +693,480 @@ class TestRenderer:
         setup.conditions.aircraft = "aerofalcon_x"
         setup.draw()
         assert setup.model().category == "military"
+
+
+# --------------------------------------------------------------------------
+# Effects and strip charts -- also viewers, never participants
+# --------------------------------------------------------------------------
+
+
+class TestEffects:
+    @pytest.fixture(scope="class")
+    def screen(self):
+        import pygame
+
+        pygame.init()
+        surface = pygame.display.set_mode((800, 600))
+        yield surface
+        pygame.quit()
+
+    def test_trail_samples_by_distance_not_by_call(self):
+        from aerosim.game.effects import TRAIL_SPACING, Trail
+
+        trail = Trail()
+        for step in range(40):
+            trail.emit(np.array([step * TRAIL_SPACING / 4.0, 0.0, 0.0]), 1.0)
+        # 40 calls covering ten spacings: a trail is a picture of a path, so
+        # its point density must follow the path and not the frame rate.
+        assert 9 <= len(trail.points) <= 12
+
+    def test_trail_breaks_rather_than_bridging_a_gap(self):
+        from aerosim.game.effects import TRAIL_SPACING, Trail
+
+        trail = Trail()
+        for step in range(6):
+            trail.emit(np.array([step * TRAIL_SPACING, 0.0, 0.0]), 1.0)
+        trail.emit(np.array([6 * TRAIL_SPACING, 0.0, 0.0]), 0.0)
+        strengths = list(trail.strengths)
+        assert strengths[-1] == 0.0
+        assert all(value > 0.0 for value in strengths[:-1])
+
+    def test_contrail_needs_cold_air(self, model):
+        from aerosim.game.effects import Effects
+
+        warm = Simulation(model, SimConditions(aircraft=model.name, altitude=ft(2000)))
+        run(warm, 2.0)
+        warm.throttle = 1.0
+        run(warm, 8.0)
+        low = Effects(model)
+        for _ in range(60):
+            low.update(warm.fdm.state, warm)
+        assert not any(
+            any(s > 0.0 for s in trail.strengths) for trail in low.contrails
+        )
+
+        cold = Simulation(model, SimConditions(aircraft=model.name, altitude=ft(37000)))
+        run(cold, 2.0)
+        cold.throttle = 1.0
+        run(cold, 20.0)
+        assert cold.fdm.state.derived.temperature < 233.15
+        high = Effects(model)
+        for _ in range(200):
+            high.update(cold.fdm.state, cold)
+            cold.step()
+        assert any(any(s > 0.0 for s in trail.strengths) for trail in high.contrails)
+
+    def test_trails_are_dropped_across_a_position_jump(self, model):
+        from aerosim.game.effects import Effects
+
+        sim = Simulation(model, SimConditions(aircraft=model.name, altitude=ft(37000)))
+        run(sim, 2.0)
+        sim.throttle = 1.0
+        effects = Effects(model)
+        for _ in range(300):
+            effects.update(sim.fdm.state, sim)
+            sim.step()
+        assert any(len(trail.points) > 2 for trail in effects.contrails)
+
+        # A restart puts the aircraft somewhere else; nothing flew between the
+        # two positions, so there is no trail between them either.
+        sim.fdm.state.x[0] += 50_000.0
+        effects.update(sim.fdm.state, sim)
+        assert all(len(trail.points) <= 1 for trail in effects.contrails)
+
+    def test_effects_do_not_touch_the_state(self, screen, model):
+        import pygame
+
+        from aerosim.game.effects import Effects
+        from aerosim.game.renderer import Renderer, Sky
+
+        sim = Simulation(model, SimConditions(aircraft=model.name))
+        run(sim, 2.0)
+        sim.throttle = 1.0
+        sim.pilot.afterburner = True
+        run(sim, 4.0)
+
+        renderer = Renderer(screen, Sky(12.0, 30000.0))
+        renderer.resize_view(pygame.Rect(0, 0, 800, 420))
+        renderer.camera.follow(sim.fdm.state, 1 / 60)
+        effects = Effects(model)
+        before = sim.fdm.state.x.copy()
+        for _ in range(10):
+            effects.update(sim.fdm.state, sim)
+            effects.draw_trails(renderer)
+            effects.draw_exhaust(renderer, sim.fdm.state, sim)
+        assert np.array_equal(sim.fdm.state.x, before)
+
+
+class TestCharts:
+    @pytest.fixture(scope="class")
+    def screen(self):
+        import pygame
+
+        pygame.init()
+        surface = pygame.display.set_mode((900, 600))
+        yield surface
+        pygame.quit()
+
+    def test_ring_keeps_the_newest_samples_in_order(self):
+        from aerosim.game.charts import CAPACITY, Trace
+
+        trace = Trace()
+        for value in range(CAPACITY + 250):
+            trace.push(float(value))
+        window = trace.window(10)
+        assert list(window) == [
+            float(v) for v in range(CAPACITY + 240, CAPACITY + 250)
+        ]
+        assert trace.count == CAPACITY
+
+    def test_sampling_follows_simulation_time_not_calls(self, model):
+        from aerosim.game.charts import SAMPLE_HZ, FlightCharts
+        from aerosim.game.instruments import Fonts
+
+        import pygame
+
+        pygame.init()
+        charts = FlightCharts(model, Fonts(1.0))
+        sim = Simulation(model, SimConditions(aircraft=model.name))
+        for _ in range(int(4.0 / sim.clock.dt)):
+            sim.step()
+            charts.update(sim)  # called far more often than the sample rate
+        count = charts.by_key["cas"].trace.count
+        assert abs(count - 4.0 * SAMPLE_HZ) <= 2
+
+    def test_history_is_dropped_when_time_runs_backwards(self, model):
+        from aerosim.game.charts import FlightCharts
+        from aerosim.game.instruments import Fonts
+
+        import pygame
+
+        pygame.init()
+        charts = FlightCharts(model, Fonts(1.0))
+        sim = Simulation(model, SimConditions(aircraft=model.name))
+        for _ in range(int(6.0 / sim.clock.dt)):
+            sim.step()
+            charts.update(sim)
+        assert charts.by_key["cas"].trace.count > 20
+
+        # A replay seek or a restart: the buffer belongs to a different flight.
+        sim.clock.step_index = 0
+        charts.update(sim)
+        assert charts.by_key["cas"].trace.count == 1
+
+    def test_terrain_underlay_is_the_ground_below_the_flight(self, model):
+        from aerosim.game.charts import FlightCharts
+        from aerosim.game.instruments import Fonts
+        from aerosim.core.units import to_ft
+
+        import pygame
+
+        pygame.init()
+        charts = FlightCharts(model, Fonts(1.0))
+        sim = Simulation(
+            model,
+            SimConditions(aircraft=model.name, altitude=ft(6000), terrain="mountainous"),
+        )
+        run(sim, 3.0)
+        charts.update(sim)
+        altitude = charts.by_key["altitude"]
+        derived = sim.fdm.state.derived
+        assert altitude.trace.window(1)[0] == pytest.approx(to_ft(derived.altitude))
+        assert altitude.underlay.window(1)[0] == pytest.approx(
+            to_ft(derived.altitude - derived.altitude_agl)
+        )
+
+    def test_charts_draw_and_do_not_touch_the_state(self, screen, model):
+        import pygame
+
+        from aerosim.game.charts import FlightCharts
+        from aerosim.game.instruments import Fonts
+
+        charts = FlightCharts(model, Fonts(1.0))
+        sim = Simulation(model, SimConditions(aircraft=model.name))
+        for _ in range(int(20.0 / sim.clock.dt)):
+            sim.step()
+            charts.update(sim)
+        before = sim.fdm.state.x.copy()
+        charts.draw_compact(screen, pygame.Rect(600, 420, 280, 170))
+        charts.draw_overlay(screen, pygame.Rect(0, 0, 900, 420))
+        assert np.array_equal(sim.fdm.state.x, before)
+
+    def test_scale_shows_a_limit_the_trace_is_approaching(self, model):
+        from aerosim.game.charts import FlightCharts
+        from aerosim.game.instruments import Fonts
+
+        import pygame
+
+        pygame.init()
+        charts = FlightCharts(model, Fonts(1.0))
+        load = charts.by_key["load"]
+        placard = model.get("limitations", "load_factor_positive", 2.5)
+
+        # Pulling up to just short of the placard: it has to be on the axis,
+        # or the chart cannot show how close the aircraft is to it.
+        near = np.linspace(1.0, placard - 0.3, 50)
+        low, high = charts._scale(load, [near])
+        assert low <= placard <= high
+
+        # A limit far from the trace does not stretch the axis to reach it.
+        # Forcing a 9 g placard onto a 1 g cruise would squeeze the trace into
+        # the bottom tenth of the box and hide the thing being plotted.
+        steady = np.full(50, 1.0)
+        low, high = charts._scale(load, [steady])
+        reach = load.minimum_span * 1.4
+        assert low <= 1.0 <= high
+        assert high <= float(steady.max()) + reach
+        assert low >= float(steady.min()) - reach
+
+
+class TestPanelLayout:
+    @pytest.fixture(scope="class")
+    def screen(self):
+        import pygame
+
+        pygame.init()
+        surface = pygame.display.set_mode((640, 480))
+        yield surface
+        pygame.quit()
+
+    @pytest.mark.parametrize("width,height", [(800, 500), (960, 600), (1280, 720), (1920, 1080)])
+    def test_panel_regions_never_overlap(self, screen, model, width, height):
+        # The panel was laid out against one window size and placed the
+        # attitude indicator at a fixed fraction of the width, so a smaller
+        # window drew the status rows straight through the stick box. The
+        # recorded demos run at 960x600, which is exactly where it showed.
+        import pygame
+
+        from aerosim.game.instruments import Fonts, Panel
+
+        sim = Simulation(model, SimConditions(aircraft=model.name))
+        run(sim, 1.0)
+        panel = Panel(
+            pygame.Rect(0, height - int(height * 0.28), width, int(height * 0.28)),
+            Fonts(1.0),
+            model,
+            sim,
+        )
+        regions = [
+            ("status", panel.status_rect),
+            ("speed", panel.speed_rect),
+            ("attitude", panel.ai_rect),
+            ("altitude", panel.alt_rect),
+            ("vsi", panel.vsi_rect),
+            ("engines", panel.engine_rect),
+        ]
+        if panel.chart_rect.width:
+            regions.append(("charts", panel.chart_rect))
+
+        for i, (name_a, a) in enumerate(regions):
+            assert a.width > 0 and a.height > 0, name_a
+            for name_b, b in regions[i + 1 :]:
+                assert not a.colliderect(b), f"{name_a} overlaps {name_b} at {width}x{height}"
+
+        # The regions not colliding is not the whole invariant: the collision
+        # was *inside* the status region, between its text rows and the stick
+        # box drawn beside them. At 960 px it was 91 px wide and both were
+        # drawn anyway. It has to be wide enough for what goes in it.
+        assert panel.status_rect.width >= Panel.STATUS_WIDE
+
+    @pytest.mark.parametrize("width", [700, 960, 1440])
+    def test_panel_draws_at_any_width(self, screen, model, width):
+        import pygame
+
+        from aerosim.game.instruments import Fonts, Panel
+
+        sim = Simulation(model, SimConditions(aircraft=model.name))
+        run(sim, 1.0)
+        surface = pygame.Surface((width, 500))
+        panel = Panel(pygame.Rect(0, 360, width, 140), Fonts(1.0), model, sim)
+        panel.draw(surface, sim)
+
+
+class TestMeshGeometry:
+    @pytest.mark.parametrize("aircraft", ["aeroliner_200", "aerofalcon_x"])
+    def test_exhaust_ports_sit_at_the_back_of_the_drawn_engine(self, aircraft):
+        # The propulsion package puts each engine at its *thrust* station,
+        # which for a podded nacelle is in the middle of it -- two and a half
+        # metres forward of the hole the mesh actually draws. A plume started
+        # there comes out of the side of the nacelle.
+        from aerosim.core.model_package import load_aircraft
+        from aerosim.core.units import to_si
+        from aerosim.game.config import DATA_ROOT
+        from aerosim.game.mesh import build_mesh, exhaust_ports
+
+        model = load_aircraft(DATA_ROOT / aircraft)
+        ports = exhaust_ports(model)
+        specs = model.raw("propulsion", "positions", []) or []
+        assert len(ports) == len(specs)
+
+        for (position, radius), spec in zip(ports, specs):
+            assert radius > 0.0
+            # Aft of the engine's own station.
+            assert position[0] < to_si(spec.get("x", 0.0))
+
+        # And inside the mesh's own extent, not floating behind it.
+        points = np.concatenate([f.points for f in build_mesh(model)], axis=0)
+        for position, _ in ports:
+            assert points[:, 0].min() - 0.5 <= position[0] <= points[:, 0].max()
+            assert points[:, 1].min() - 0.5 <= position[1] <= points[:, 1].max() + 0.5
+
+
+class TestHorizon:
+    @pytest.fixture(scope="class")
+    def screen(self):
+        import pygame
+
+        pygame.init()
+        surface = pygame.display.set_mode((800, 600))
+        yield surface
+        pygame.quit()
+
+    def test_horizon_row_matches_a_projected_distant_point(self, screen, model):
+        # The sky gradient is positioned on this row, so if it is wrong the sky
+        # and the fully hazed far ground meet in two different colours.
+        import pygame
+
+        from aerosim.game.renderer import Renderer, Sky
+
+        sim = Simulation(
+            model, SimConditions(aircraft=model.name, altitude=ft(12000), heading=deg(37))
+        )
+        run(sim, 3.0)
+
+        renderer = Renderer(screen, Sky(12.0, 45000.0))
+        renderer.resize_view(pygame.Rect(0, 0, 800, 420))
+        renderer.camera.follow(sim.fdm.state, 1 / 60)
+
+        # A point 4 000 km away at the camera's own height is, to the accuracy
+        # of a flat-earth projection, on the horizon.
+        far = renderer.camera.position + np.array(
+            [
+                4.0e6 * math.cos(sim.fdm.state.derived.yaw),
+                4.0e6 * math.sin(sim.fdm.state.derived.yaw),
+                0.0,
+            ]
+        )
+        projected = renderer.project(renderer.camera.to_camera(far[None, :]))
+        assert renderer.horizon_y() == pytest.approx(float(projected[0, 1]), abs=0.5)
+
+    @pytest.mark.parametrize("width,height", [(800, 420), (1920, 900), (3840, 1600)])
+    def test_horizon_leaves_the_screen_the_right_way_when_looking_straight_down(
+        self, screen, width, height
+    ):
+        import pygame
+
+        from aerosim.game.renderer import Renderer, Sky
+
+        surface = pygame.Surface((width, height))
+        renderer = Renderer(surface, Sky(12.0, 45000.0))
+        renderer.resize_view(pygame.Rect(0, 0, width, height))
+
+        # Straight down: the horizon is above the top of the view, not below.
+        renderer.camera.basis = np.array(
+            [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+        )
+        assert renderer.horizon_y() < 0
+        renderer.draw_sky()  # the sky offset becomes a pygame Rect, which is 32-bit
+
+        # Straight up: below the bottom of it.
+        renderer.camera.basis = np.array(
+            [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]]
+        )
+        assert renderer.horizon_y() > height
+        renderer.draw_sky()
+
+
+class TestChartEnvelope:
+    @pytest.mark.parametrize(
+        "count,width", [(2, 400), (50, 400), (400, 400), (401, 400), (2400, 300)]
+    )
+    def test_envelope_spans_the_plot_and_keeps_the_extremes(self, count, width):
+        # A strip chart holds more samples than it has pixel columns. Taking
+        # every nth sample would drop a 0.3 s g spike between two columns; the
+        # min and max of each column keep it.
+        from aerosim.game.charts import FlightCharts
+
+        series = np.sin(np.linspace(0.0, 8.0, count))
+        x, low, high = FlightCharts._envelope(series, width)
+
+        assert len(x) == len(low) == len(high)
+        assert x[0] == pytest.approx(0.0)
+        assert x[-1] == pytest.approx(width - 1)
+        assert np.all(np.diff(x) > 0.0)
+        assert low.min() == pytest.approx(series.min())
+        assert high.max() == pytest.approx(series.max())
+        assert np.all(low <= high)
+
+
+class TestTerrainDetail:
+    def test_cell_size_rises_with_the_snapped_value_not_to_its_floor(self):
+        # `10 ** round(log10(x))` sends anything above 3.16e(k) up a decade,
+        # and x / magnitude then rounds to zero. The near cell was pinned to
+        # its own floor for every altitude between about 900 m and 7 km, and
+        # the outer ring lost three quarters of its reach exactly where the
+        # horizon is furthest away.
+        from aerosim.game.renderer import MAX_CELL, MIN_CELL, _snap
+
+        for size in (120.0, 250.0, 420.0, 700.0, 1100.0, 1540.0):
+            snapped = _snap(size)
+            assert MIN_CELL <= snapped <= MAX_CELL
+            # Within a factor of two of what was asked for, in both directions.
+            assert 0.5 * size <= snapped <= 2.0 * size or snapped == MIN_CELL
+
+        sizes = [_snap(v) for v in (120.0, 300.0, 600.0, 1200.0)]
+        assert sizes == sorted(sizes)
+        assert sizes[-1] > sizes[0]
+
+    def test_snapping_gives_a_short_ladder_of_round_sizes(self):
+        # Snapping exists so the size is *constant* over a range of altitudes:
+        # a continuously varying cell slides the whole heightfield lattice
+        # under the view every frame, and the ground crawls.
+        from aerosim.game.renderer import MAX_CELL, MIN_CELL, _snap
+
+        sizes = {_snap(float(v)) for v in np.linspace(50.0, 2500.0, 400)}
+        assert len(sizes) <= 8, sorted(sizes)
+        for snapped in sizes:
+            if snapped in (MIN_CELL, MAX_CELL):
+                continue  # the clamps, which are constant by construction
+            mantissa = snapped / 10.0 ** math.floor(math.log10(snapped))
+            assert mantissa in (1.0, 2.0, 5.0), snapped
+
+    def test_snapping_honours_an_explicit_maximum(self):
+        from aerosim.game.renderer import MIN_CELL, _snap
+
+        for maximum in (144.0, 433.0, 865.0):
+            for size in np.linspace(50.0, 2500.0, 80):
+                snapped = _snap(float(size), maximum=maximum)
+                assert MIN_CELL <= snapped <= max(maximum, MIN_CELL)
+
+    def test_detail_reach_is_capped_by_visibility(self, model):
+        # Ground twice the visibility away is fully hazed to the horizon
+        # colour, so cells drawn out there cost a frame and paint nothing the
+        # base plane was not painting already.
+        import pygame
+
+        from aerosim.game.renderer import (
+            RING_CELLS,
+            RING_FACTOR,
+            RING_LEVELS,
+            Renderer,
+            Sky,
+        )
+
+        pygame.init()
+        screen = pygame.display.set_mode((640, 480))
+        outer = RING_CELLS * RING_FACTOR ** (RING_LEVELS - 1)
+
+        for visibility in (8_000.0, 45_000.0, 90_000.0):
+            renderer = Renderer(screen, Sky(12.0, visibility))
+            renderer.resize_view(pygame.Rect(0, 0, 640, 300))
+            sim = Simulation(
+                model, SimConditions(aircraft=model.name, altitude=ft(38000))
+            )
+            run(sim, 2.0)
+            renderer.camera.follow(sim.fdm.state, 1 / 60)
+            renderer.draw_terrain(sim.fdm.state, sim.terrain, None)
+
+            cell = min(key[0] for key in renderer._ring_cache)
+            assert cell * outer <= max(30_000.0, 2.0 * visibility) + 1.0

@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from ..core.frames import cross3
 from .tables import Table1D
 
 IDLE_N1 = 0.20
@@ -188,7 +189,7 @@ class PropulsionModel:
                 ]
             )
             force += thrust_vector
-            moment += np.cross(position, thrust_vector)
+            moment += cross3(position, thrust_vector)
             total_thrust += thrust
             total_flow += self.sfc * thrust * (self.ab_fuel_factor if want_ab else 1.0)
 
@@ -273,7 +274,7 @@ class PropulsionModel:
                 ]
             )
             force += thrust_vector
-            moment += np.cross(position, thrust_vector)
+            moment += cross3(position, thrust_vector)
 
             total_thrust += engine.thrust
             total_flow += engine.fuel_flow

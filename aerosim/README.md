@@ -50,6 +50,7 @@ really produces, not a placard figure.
 |---|---|
 | **Aircraft** | AeroLiner-200 (passenger) or AeroFalcon-X (war) |
 | **Initial condition** | runway / airborne / approach, altitude, airspeed, heading, field elevation |
+| **Terrain** | flat, gentle, rolling, hilly or mountainous |
 | **Loading** | fuel and payload as a fraction of capacity |
 | **Weather** | wind speed and direction, shear, turbulence, ISA offset, QNH, time of day, visibility |
 | **Failures** | engine, hydraulic, elevator jam or fuel leak, and when it fires |
@@ -87,6 +88,8 @@ Chase view above, full instrument panel below.
 | `0` | autopilot and autoflight off |
 | `F5` | start / stop telemetry recording |
 | `[` `]` | chase camera closer and further |
+| `C` | **flight traces** — speed, altitude, g, alpha, V/S, N1 over time |
+| `,` `.` | shorter and longer trace window |
 | `P` `H` `R` `ESC` | pause, help, restart, back to setup |
 
 **Flight assist** (on by default) is a rate damper, not a controller. It
@@ -94,7 +97,7 @@ resists the aircraft's own oscillations and leaves your command alone. It will
 happily let you stall.
 
 The renderer is pure software — no GPU, no shaders — and holds a 60 Hz frame
-budget: roughly 10–14 ms to draw and 2–3 ms for the 100 Hz flight model. The
+budget: roughly 12–20 ms to draw and 2–3 ms for the 100 Hz flight model. The
 physics rate is independent of the frame rate, so a slower machine renders
 fewer frames of the *same* flight rather than a different one.
 
@@ -103,6 +106,34 @@ tapes with stall and VMO bands, vertical speed, engine N1 and EGT, fuel, mass,
 CG, and both commanded *and* actual control positions — so a jammed or
 rate-limited surface reads as a divergence between the two rather than only as
 odd handling.
+
+### The view
+
+- **Terrain you can hit.** The renderer and the flight model read the same
+  procedural heightfield, so the ridge on the horizon is the ridge the gear
+  will find. Hills you can see but cannot hit are worse than no hills at all,
+  because the picture then contradicts the simulation it exists to show.
+  Three levels of detail — fine cells near the aircraft, each ring beyond it
+  four times coarser — reach 25 km from the runway and 90 km from the cruise,
+  capped by the visibility so nothing is drawn out where the haze has already
+  turned the ground into sky.
+- **Sky anchored to the horizon.** The gradient is positioned on the projected
+  horizon rather than on the screen, so the fully hazed far ground and the sky
+  meet in the same colour instead of along a hard line.
+- **Effects that mean something.** The fighter's plume is its spool speed and
+  its reheat state; a contrail says the air outside is below about −40 °C; the
+  streamers off the wingtips say the wing is loaded past about 3 g in moist
+  air. All three are qualitative — see `docs/known_limitations.md` §12.
+- **Strip charts.** `C` opens six time histories over the last 20–240 seconds,
+  with the placards drawn as bands and the *terrain profile under the altitude
+  trace*, so the gap on the chart is the clearance the flight actually had.
+  Two of them stay on the panel while you fly. They sample simulation time,
+  not wall time, so pausing pauses them and a replay draws what the run did.
+
+An instrument tells you what a quantity is now; a trace tells you what it has
+been doing. A speed five knots above the stall is fine if it is steady and an
+emergency if it has been falling for ten seconds, and the two look identical
+on a tape.
 
 ---
 
@@ -276,6 +307,7 @@ aerosim/
 │   └── orchestrator.py     subsystem lifecycle and execution order
 ├── env/
 │   ├── atmosphere.py       ISA 1976 to 47 km, offsets, CAS/EAS conversions
+│   ├── terrain.py          procedural heightfield -- drawn AND flown
 │   └── wind.py             layered wind, seeded turbulence
 ├── fdm/
 │   ├── tables.py           1-D and 2-D interpolation with range policy
@@ -297,15 +329,18 @@ aerosim/
 │   ├── config.py           the pre-flight conditions object
 │   ├── setup_screen.py     condition entry and live briefing
 │   ├── mesh.py             aircraft geometry, built from the data package
-│   ├── renderer.py         chase camera, clipping, terrain, runway
+│   ├── sky.py              sun, gradient, haze, cloud field
+│   ├── renderer.py         chase camera, clipping, terrain LOD, runway
+│   ├── effects.py          exhaust plume, contrails, wingtip vortices
 │   ├── instruments.py      PFD, tapes, engine and systems panel
+│   ├── charts.py           strip charts: the flight as a time history
 │   └── app.py              the game loop
 └── data/aircraft/
     ├── aeroliner_200/      passenger
     └── aerofalcon_x/       war
 ```
 
-Roughly 7 350 lines of source, 1 610 lines of tests, 730 lines of aircraft data.
+Roughly 9 900 lines of source, 2 800 lines of tests, 770 lines of aircraft data.
 
 ### Execution order
 
@@ -396,7 +431,7 @@ harder to diagnose later than a failed assertion now.
 
 ### Defects the suite and the build found
 
-Nine, all in code that appeared to work:
+Thirteen, all in code that appeared to work:
 
 1. **Trim solved a different model from the one being flown.** The trim solver
    assembled thrust forces itself and omitted the engine-position moment the
@@ -438,6 +473,37 @@ Nine, all in code that appeared to work:
    saturating the pitch loop into a bunt. Fixed with a gamma + filtered-alpha
    feed-forward and a rate-limited attitude command. Altitude hold now settles
    within a few feet instead of descending 13 000 ft.
+10. **A localizer captured from 2.3 km off the centreline.** Capture tested
+    absolute distance to the extended centreline rather than the angle to it,
+    so far out on the intercept the geometry looked "close" and the autoland
+    armed while still well displaced. It then rolled hard to correct at low
+    altitude, and put a wingtip in the ground. Fixed with an angular capture
+    criterion, a bank limit that closes to 4° near the ground, and a go-around
+    at minimums rather than a save attempt.
+11. **An auto take-off that stalled every departure.** Rotation was an
+    open-loop stick ramp, which took the aircraft to 20° alpha with a STALL and
+    an ENVELOPE caution on the way out. Replaced with attitude-hold rotation —
+    and that alone still overshot to 22°, because the law was allowed to pull
+    but never to push. Letting it command forward stick once airborne gives a
+    13.9° peak at 10.5° alpha.
+12. **Terrain rings that left a gap in the ground.** Each level of detail snaps
+    its grid to its own cell size, so no two levels are aligned. The hollow cut
+    in the coarse ring for the fine one to fill was counted in the coarse
+    ring's cells, and therefore landed up to a whole coarse cell off the fine
+    ring's real footprint — a band of bare base plane straight across the
+    middle distance, in the part of the picture the eye is guaranteed to be
+    looking at. Fixed by measuring the hollow in metres against what the finer
+    ring is geometrically guaranteed to cover.
+13. **A detail level that collapsed to its own floor.** The terrain cell size
+    is snapped to a round number so the grid does not shimmer as the aircraft
+    climbs, and the snap read `10 ** round(log10(size))`. Rounding the
+    *exponent* sends anything above 3.16 × 10^k up a decade, after which
+    `size / magnitude` rounds to zero and the whole expression collapses to
+    the clamp. The near cell was therefore pinned at 120 m for every altitude
+    between about 900 m and 7 km, and the outer ring reached 25 km instead of
+    90 — at exactly the altitudes where the horizon is furthest away. It drew
+    a plausible picture the whole time, which is why it took a printed table
+    of cell size against altitude to find it.
 
 ---
 
@@ -448,7 +514,7 @@ behaviour, systems interaction and failure response.
 
 It does **not** model: aeroelasticity, rotorcraft, propeller aircraft, detailed
 engine thermodynamics, transonic or supersonic aerodynamics, sensor error,
-navigation aids, terrain beyond a single flat plane with one runway,
+navigation aids, scenery beyond a procedural heightfield and one runway,
 certification-grade correlation with any real type, or any weapon or mission
 system.
 

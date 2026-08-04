@@ -27,6 +27,7 @@ from ..control.actuators import ControlSurfaces
 from ..control.autopilot import Autopilot
 from ..core.state import State
 from ..env.atmosphere import Atmosphere
+from ..env.terrain import Terrain
 from ..env.wind import WindField
 from ..fdm.aero import AeroModel
 from ..fdm.fdm import Diagnostics
@@ -167,6 +168,15 @@ class ReplaySession:
         self.wind = WindField.uniform(
             self.conditions.wind_speed, self.conditions.wind_direction
         )
+        # Rebuilt from the recorded seed and profile, not stored in the file:
+        # the heightfield is a pure function of those two, so a replay lands in
+        # the same valley the run took off from without carrying a landscape
+        # around in the telemetry.
+        self.terrain = Terrain(
+            seed=self.conditions.seed,
+            profile=self.conditions.terrain,
+            field_elevation=self.conditions.field_elevation,
+        )
 
         rate = float(run.manifest.get("sample_rate_hz", 50.0)) or 50.0
         self.clock = ReplayClock(dt=1.0 / rate, rate_hz=rate)
@@ -197,6 +207,17 @@ class ReplaySession:
     @property
     def progress(self) -> float:
         return self.index / max(1, self.run.rows - 1)
+
+    @property
+    def propulsion(self):
+        """The engine states, so a viewer can read spool and reheat.
+
+        A Simulation owns its propulsion model directly; here it lives on the
+        replay FDM because that is what ``apply`` writes the recorded engine
+        columns into. Exposing it under the same name is what lets the game
+        draw the same exhaust plume for a replay as for a live flight.
+        """
+        return self.fdm.propulsion
 
     def seek_time(self, seconds: float) -> None:
         seconds = max(0.0, min(self.duration, seconds))

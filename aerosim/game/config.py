@@ -76,11 +76,15 @@ class SimConditions:
     turbulence: str = "none"
     temperature_offset: float = 0.0  # K from ISA
     qnh: float = 101325.0  # Pa
-    visibility: float = 30000.0  # m, affects the haze only
+    visibility: float = 45000.0  # m, affects the haze only
     time_of_day: float = 12.0  # hours, drives the lighting
 
     # -- terrain ----------------------------------------------------------
     field_elevation: float = 0.0  # m
+    # The heightfield is shared by the renderer and the flight model, so
+    # this setting changes what the aircraft can hit as well as what it
+    # can see. The airport itself stays flat under every profile.
+    terrain: str = "rolling"
 
     # -- failures ---------------------------------------------------------
     failure: str = FailureMode.NONE
@@ -122,6 +126,7 @@ class SimConditions:
             ("Payload", f"{self.payload_fraction * 100:.0f} %"),
             ("Wind", wind),
             ("Turbulence", self.turbulence),
+            ("Terrain", self.terrain),
             ("ISA offset", f"{self.temperature_offset:+.0f} C"),
             ("Failure", FAILURE_LABELS[self.failure]),
             ("Seed", str(self.seed)),

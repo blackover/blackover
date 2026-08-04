@@ -423,6 +423,112 @@ def build_mesh(model) -> list[Facet]:
     return build_airliner(model)
 
 
+def exhaust_ports(model) -> list[tuple[np.ndarray, float]]:
+    """Where each engine's exhaust leaves the mesh, and how wide the hole is.
+
+    Returned by the module that drew the nacelles rather than derived again
+    somewhere else, because a plume that starts at the engine's *thrust*
+    station comes out of the middle of the nacelle -- which is where the
+    propulsion package puts the engine, and about two and a half metres
+    forward of the hole in the picture.
+
+    One (position, radius) pair per engine, in body axes, matching the
+    geometry ``build_mesh`` produced for the same package.
+    """
+    from ..core.units import to_si
+
+    length = model.get("geometry", "fuselage_length", 30.0)
+    diameter = model.get("geometry", "fuselage_diameter", 3.0)
+    specs = model.raw("propulsion", "positions", []) or []
+
+    if model.category == "military":
+        # Blended tail: the nozzle is the dark disc at the aft fuselage
+        # station, on the centreline, whatever the thrust station says.
+        nose_x = 0.50 * length
+        tail_x = nose_x - length
+        return [(np.array([tail_x, 0.0, 0.05]), 0.5 * diameter * 0.72) for _ in specs or [None]]
+
+    # Podded nacelles: the tube profile in build_airliner ends 2.40 m aft of
+    # the engine station at a radius of 0.86 m.
+    ports = []
+    for spec in specs:
+        ports.append(
+            (
+                np.array(
+                    [
+                        to_si(spec.get("x", 0.0)) - 2.40,
+                        to_si(spec.get("y", 0.0)),
+                        to_si(spec.get("z", 0.0)),
+                    ]
+                ),
+                0.86,
+            )
+        )
+    return ports
+
+
+def shadow_outline(model) -> list[Facet]:
+    """A coarse planform, used only for casting the shadow.
+
+    Six quads instead of the full mesh's hundred and thirty. A shadow is a
+    filled silhouette on the ground -- nobody can tell which facet made which
+    part of it, and projecting the whole aircraft costs as much again as
+    drawing it.
+    """
+    span = model.get("geometry", "wing_span")
+    area = model.get("geometry", "wing_area")
+    length = model.get("geometry", "fuselage_length", 30.0)
+    diameter = model.get("geometry", "fuselage_diameter", 3.0)
+    sweep = model.get("geometry", "wing_sweep_quarter_chord", math.radians(25.0))
+    tail_arm = model.get("geometry", "tail_arm", 0.4 * length)
+
+    half_span = 0.5 * span
+    taper = 0.24
+    root_chord = 2.0 * area / (span * (1.0 + taper))
+    tip_chord = root_chord * taper
+    nose_x = 0.47 * length
+    tail_x = nose_x - length
+
+    root_le, root_te = 0.25 * root_chord, 0.25 * root_chord - root_chord
+    tip_offset = half_span * math.tan(sweep)
+    tip_le = -tip_offset + 0.25 * tip_chord
+    tip_te = tip_le - tip_chord
+
+    half_body = 0.5 * diameter
+    stab_span = 0.20 * span
+    stab_x = -tail_arm + 3.0
+
+    facets = [
+        _quad(
+            (nose_x, -half_body * 0.5, 0.0),
+            (nose_x, half_body * 0.5, 0.0),
+            (tail_x, half_body * 0.6, 0.0),
+            (tail_x, -half_body * 0.6, 0.0),
+            (0, 0, 0),
+        )
+    ]
+    for side in (1.0, -1.0):
+        facets.append(
+            _quad(
+                (root_le, side * half_body, 0.0),
+                (tip_le, side * half_span, 0.0),
+                (tip_te, side * half_span, 0.0),
+                (root_te, side * half_body, 0.0),
+                (0, 0, 0),
+            )
+        )
+        facets.append(
+            _quad(
+                (stab_x + 1.4, side * half_body, 0.0),
+                (stab_x - 0.6, side * stab_span, 0.0),
+                (stab_x - 2.4, side * stab_span, 0.0),
+                (stab_x - 2.6, side * half_body, 0.0),
+                (0, 0, 0),
+            )
+        )
+    return facets
+
+
 def gear_facets(model, extension: float) -> list[Facet]:
     """Landing gear, drawn only as far as it has actually extended."""
     if extension <= 0.01:

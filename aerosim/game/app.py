@@ -21,7 +21,9 @@ from ..core.model_package import PackageError, load_aircraft
 from ..core.orchestrator import Simulation
 from ..core.units import to_ft, to_kt
 from ..telemetry.recorder import TelemetryRecorder, default_run_dir
+from .charts import FlightCharts
 from .config import DATA_ROOT, SimConditions
+from .effects import Effects
 from .instruments import (
     AMBER,
     CYAN,
@@ -34,8 +36,9 @@ from .instruments import (
     Panel,
     draw_text,
 )
-from .mesh import build_mesh, gear_facets
-from .renderer import Renderer, Runway, Sky
+from .mesh import build_mesh, gear_facets, shadow_outline
+from .renderer import Renderer, Runway
+from .sky import Sky
 from .setup_screen import SetupScreen
 
 WINDOW_SIZE = (1440, 900)
@@ -57,6 +60,8 @@ HELP_LINES = [
     ("0", "autopilot and autoflight off"),
     ("F5", "start and stop telemetry recording"),
     ("[ / ]", "chase camera closer and further"),
+    ("C", "flight traces  -- speed, altitude, g, alpha, V/S, N1"),
+    (", / .", "shorter and longer trace window"),
     ("P", "pause"),
     ("H", "this help"),
     ("R", "restart with the same conditions"),
@@ -101,6 +106,7 @@ class Game:
         self.fonts = Fonts(1.0)
         self.conditions = SimConditions()
         self.show_help = False
+        self.show_charts = False
         self.recorder: TelemetryRecorder | None = None
         self.record_from_start = False
         self.last_run_dir = None
@@ -126,9 +132,16 @@ class Game:
     def _build(self):
         model = load_aircraft(DATA_ROOT / self.conditions.aircraft)
         sim = Simulation(model, self.conditions)
-        sky = Sky(self.conditions.time_of_day, self.conditions.visibility)
+        sky = Sky(
+            self.conditions.time_of_day,
+            self.conditions.visibility,
+            seed=self.conditions.seed,
+        )
         renderer = Renderer(self.surface, sky)
         mesh = build_mesh(model)
+        self._shadow_mesh = shadow_outline(model)
+        self._effects = Effects(model)
+        self._charts = FlightCharts(model, self.fonts)
 
         # Frame the aircraft from its own dimensions rather than a fixed
         # distance: 42 m behind a 37 m airliner fills the screen, and the same
@@ -247,6 +260,12 @@ class Game:
             sim.log("INFO", "paused" if sim.paused else "resumed")
         elif key == pygame.K_h:
             self.show_help = not self.show_help
+        elif key == pygame.K_c:
+            self.show_charts = not self.show_charts
+        elif key == pygame.K_COMMA:
+            self._charts.window_seconds = max(20.0, self._charts.window_seconds / 1.5)
+        elif key == pygame.K_PERIOD:
+            self._charts.window_seconds = min(240.0, self._charts.window_seconds * 1.5)
         elif key == pygame.K_r:
             return "restart"
         elif key == pygame.K_g:
@@ -331,7 +350,8 @@ class Game:
         state = sim.fdm.state
         renderer.camera.follow(state, dt)
         renderer.draw_sky()
-        renderer.draw_terrain(state, sim.conditions.field_elevation, runway)
+        renderer.draw_terrain(state, sim.terrain, runway)
+        renderer.draw_clouds(state)
 
         # Rebuild the combined facet list only when the gear has visibly moved.
         # A fresh list every frame would defeat the renderer's mesh cache, and
@@ -340,14 +360,32 @@ class Game:
         if detent != getattr(self, "_gear_detent", None):
             self._gear_detent = detent
             self._facets = mesh + gear_facets(model, detent / 24.0)
-        renderer.draw_aircraft(state, self._facets, dcm_body_to_ned(state.quaternion))
+        dcm = dcm_body_to_ned(state.quaternion)
+        renderer.draw_shadow(state, self._shadow_mesh, dcm, sim.terrain)
+
+        # Trails behind the aircraft, then the aircraft, then the plume in
+        # front of it: the exhaust glows over the nozzle it comes out of, and
+        # a contrail five kilometres back must not be painted over the tail.
+        self._effects.update(state, sim)
+        self._effects.draw_trails(renderer)
+        renderer.draw_aircraft(state, self._facets, dcm)
+        self._effects.draw_exhaust(renderer, state, sim)
 
         self.surface.set_clip(previous_clip)
 
         self._draw_hud(sim, view)
         panel.draw(self.surface, sim)
+
+        # The panel owns the layout; the charts own their own history, which
+        # outlives any one panel and has to survive a window resize.
+        self._charts.update(sim)
+        if panel.chart_rect.width:
+            self._charts.draw_compact(self.surface, panel.chart_rect)
+
         self._draw_messages(sim, view)
 
+        if self.show_charts:
+            self._charts.draw_overlay(self.surface, view)
         if self.show_help:
             self._draw_help(view)
         if sim.paused:
@@ -517,12 +555,19 @@ class Game:
                 "  The file has changed since it was recorded."
             )
 
-        sky = Sky(session.conditions.time_of_day, session.conditions.visibility)
+        sky = Sky(
+            session.conditions.time_of_day,
+            session.conditions.visibility,
+            seed=session.conditions.seed,
+        )
         renderer = Renderer(self.surface, sky)
         length = model.get("geometry", "fuselage_length", 30.0)
         renderer.camera.distance = 1.75 * length
         renderer.camera.height = 0.30 * length
         mesh = build_mesh(model)
+        self._shadow_mesh = shadow_outline(model)
+        self._effects = Effects(model)
+        self._charts = FlightCharts(model, self.fonts)
         runway = Runway(
             length=3200.0,
             width=45.0,
@@ -552,6 +597,16 @@ class Game:
                         session.paused = not session.paused
                     elif event.key == pygame.K_h:
                         self.show_help = not self.show_help
+                    elif event.key == pygame.K_c:
+                        self.show_charts = not self.show_charts
+                    elif event.key == pygame.K_COMMA:
+                        self._charts.window_seconds = max(
+                            20.0, self._charts.window_seconds / 1.5
+                        )
+                    elif event.key == pygame.K_PERIOD:
+                        self._charts.window_seconds = min(
+                            240.0, self._charts.window_seconds * 1.5
+                        )
                     elif event.key == pygame.K_LEFT:
                         session.step_frames(-int(session.clock.rate_hz))
                     elif event.key == pygame.K_RIGHT:

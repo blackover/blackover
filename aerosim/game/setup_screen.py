@@ -27,6 +27,7 @@ from ..core.units import (
     to_ft,
     to_kt,
 )
+from ..env.terrain import PROFILES as TERRAIN_PROFILES
 from ..env.wind import TURBULENCE_PRESETS
 from .config import (
     DATA_ROOT,
@@ -74,6 +75,15 @@ def _clamp(value, low, high):
     return max(low, min(high, value))
 
 
+TERRAIN_LABELS = {
+    "flat": "flat            (a single level plane)",
+    "gentle": "gentle          (low rises, +/- 90 m)",
+    "rolling": "rolling         (hills, +/- 260 m)",
+    "hilly": "hilly           (ridges, +/- 620 m)",
+    "mountainous": "mountainous     (peaks past 1,500 m)",
+}
+
+
 def build_settings() -> list[tuple[str, list[Setting]]]:
     """The full pre-flight configuration, grouped into sections."""
     aircraft_ids = ["aeroliner_200", "aerofalcon_x"]
@@ -90,6 +100,10 @@ def build_settings() -> list[tuple[str, list[Setting]]]:
         FailureMode.FUEL_LEAK,
     ]
     start_modes = [StartMode.RUNWAY, StartMode.AIRBORNE, StartMode.APPROACH]
+    # Ordered by how much relief they have, not by dict order, so the arrow
+    # keys walk from flat to mountainous rather than around a hash table.
+    terrain_profiles = ["flat", "gentle", "rolling", "hilly", "mountainous"]
+    assert set(terrain_profiles) == set(TERRAIN_PROFILES)
 
     def airborne(c: SimConditions) -> bool:
         return c.start_mode != StartMode.RUNWAY
@@ -150,6 +164,14 @@ def build_settings() -> list[tuple[str, list[Setting]]]:
                         "field_elevation",
                         _clamp(c.field_elevation + d * ft(500 if f else 100), 0.0, ft(9000)),
                     ),
+                ),
+                Setting(
+                    "Terrain",
+                    lambda c: TERRAIN_LABELS[c.terrain],
+                    lambda c, d, f: setattr(
+                        c, "terrain", _cycle(terrain_profiles, c.terrain, d)
+                    ),
+                    note="the ground you can see is the ground you can hit",
                 ),
             ],
         ),

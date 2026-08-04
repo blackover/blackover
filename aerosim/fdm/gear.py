@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..core.frames import dcm_body_to_ned, dcm_ned_to_body
+from ..core.frames import cross3, dcm_body_to_ned, dcm_ned_to_body
 from ..core.units import to_si
 
 FRICTION_VELOCITY_SCALE = 0.3  # m/s
@@ -56,8 +56,14 @@ class GearOutput:
 class GearModel:
     """Ground reaction from a set of independent struts."""
 
-    def __init__(self, model, terrain_elevation: float = 0.0) -> None:
+    def __init__(self, model, terrain=None, terrain_elevation: float = 0.0) -> None:
+        # Ground height comes from the terrain when one is supplied, so the
+        # wheels stand on the surface that is drawn rather than on a plane that
+        # merely happens to be near it. Without one it is a single flat plane,
+        # which is what every scenario before terrain existed assumed.
+        self.terrain = terrain
         self.terrain_elevation = terrain_elevation
+
         self.rolling_friction = model.get("landing_gear", "rolling_friction", 0.02)
         self.brake_friction = model.get("landing_gear", "brake_friction", 0.40)
         self.side_friction = model.get("landing_gear", "side_friction", 0.65)
@@ -98,6 +104,12 @@ class GearModel:
                 )
             )
 
+    def ground_height(self, north: float, east: float) -> float:
+        """Terrain elevation under a point, or the flat plane if there is none."""
+        if self.terrain is None:
+            return self.terrain_elevation
+        return self.terrain.height_at(north, east)
+
     @property
     def lowest_point(self) -> float:
         """Body-axis z of the lowest wheel, used to sit the aircraft on ground."""
@@ -128,7 +140,14 @@ class GearModel:
         for strut in self.struts:
             # Where this wheel is, in NED.
             offset_ned = body_to_ned @ strut.position
-            wheel_height = altitude - float(offset_ned[2]) - self.terrain_elevation
+            # Each wheel is tested against the ground under *that wheel*. On a
+            # slope the mains touch before the nose, which is the behaviour
+            # that makes a landing on rising ground feel different.
+            ground = self.ground_height(
+                float(position_ned[0]) + float(offset_ned[0]),
+                float(position_ned[1]) + float(offset_ned[1]),
+            )
+            wheel_height = altitude - float(offset_ned[2]) - ground
 
             if wheel_height >= 0.0:
                 strut.compression = 0.0
@@ -141,7 +160,7 @@ class GearModel:
             strut.on_ground = True
 
             # Velocity of this wheel, body axes, including the rotation term.
-            wheel_velocity_body = velocity_body + np.cross(rates, strut.position)
+            wheel_velocity_body = velocity_body + cross3(rates, strut.position)
             wheel_velocity_ned = body_to_ned @ wheel_velocity_body
             sink_rate = float(wheel_velocity_ned[2])  # positive downwards
 
@@ -197,7 +216,7 @@ class GearModel:
             force_body = ned_to_body @ force_ned
 
             output.force_body = output.force_body + force_body
-            output.moment_body = output.moment_body + np.cross(strut.position, force_body)
+            output.moment_body = output.moment_body + cross3(strut.position, force_body)
             output.any_contact = True
 
         output.weight_on_wheels = output.any_contact

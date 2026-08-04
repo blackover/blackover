@@ -30,6 +30,7 @@ from ..control.autoflight import AutoFlight
 from ..control.autoflight import Runway as GuidanceRunway
 from ..control.autopilot import Autopilot, LateralMode, ThrustMode, VerticalMode
 from ..env.atmosphere import Atmosphere
+from ..env.terrain import Terrain
 from ..env.wind import TURBULENCE_PRESETS, WindField
 from ..fdm.fdm import Controls, FlightDynamics
 from ..fdm.trim import apply_trim, trim_level_flight
@@ -76,12 +77,18 @@ class Simulation:
 
         self.atmosphere = Atmosphere(conditions.temperature_offset, conditions.qnh)
         self.wind = self._build_wind(conditions)
+        self.terrain = Terrain(
+            seed=conditions.seed,
+            profile=conditions.terrain,
+            field_elevation=conditions.field_elevation,
+        )
 
         self.fdm = FlightDynamics(
             model,
             atmosphere=self.atmosphere,
             wind=self.wind,
             field_elevation=conditions.field_elevation,
+            terrain=self.terrain,
         )
         self.surfaces = ControlSurfaces(model)
         self.autopilot = Autopilot(model)

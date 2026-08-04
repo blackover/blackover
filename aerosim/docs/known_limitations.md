@@ -309,12 +309,66 @@ what the package checksum, the confidence ratings and the test suite are for.
 
 ---
 
-## 11. Not modelled at all
+## 11. Terrain
+
+**Simplification.** Ground elevation is a procedural heightfield: a hash of the
+integer lattice summed over four or five octaves of value noise, with an
+optional ridge fold. It is not a survey, a DEM, or a model of any real place.
+The airport sits on a flat plateau blended into the surrounding relief over
+9 km, because approach guidance, gear reaction and the autoland flare all
+assume level ground near the runway.
+
+**Consequence.** Elevations are plausible rather than correct. Slopes are
+smooth at the octave scale and have no cliffs, no watercourses and no man-made
+cuttings. There is no vegetation, no surface classification and no variation in
+rolling friction with surface type — the whole field has the runway's friction
+coefficients, including the parts of it that are, by their colour, a mountain.
+
+**What it *is* authoritative for.** The renderer and the flight model read the
+same `Terrain` object, so the hill you can see is the hill you hit. There is
+deliberately no second copy of the surface. Terrain impact is reported
+distinctly from a runway crash, with the elevation that was struck.
+
+**Also.** The field is a pure function of `(seed, profile, field_elevation)`,
+so it is not stored in telemetry: a replay rebuilds the identical landscape
+from the manifest. Changing the seed changes the landscape a recorded flight
+appears to have flown over, which is why the seed is part of the manifest.
+
+**Not acceptable for.** Terrain-following or terrain-avoidance system
+development, obstacle clearance analysis, or anything where a real elevation
+matters. There is no TAWS and no obstacle database.
+
+---
+
+## 12. Visual effects
+
+**Simplification.** Exhaust plumes, contrails and wingtip vortices are drawn
+from state variables through hand-tuned thresholds. They are gated on the
+physical conditions that produce them — spool speed and the afterburner flag
+for the plume, static air temperature for contrails, load factor and altitude
+for vortices — so they carry information rather than being decoration. None of
+them is a calculation of the thing they depict.
+
+**Consequence.** The contrail threshold is a fixed −40 °C with an 8 K
+shoulder, not the Appleman criterion, so it ignores pressure and humidity
+entirely and will show a persistent trail in air that in reality is far too dry
+for one. Plume length scales with spool speed and reheat; it is not a nozzle
+calculation and should not be read as one. The vortex condition uses altitude
+as a proxy for humidity, which is a stand-in for a quantity this simulator does
+not have.
+
+**Invariant.** Effects read the simulation and write nothing back. An effect
+that could alter the aircraft's path would be a second, undocumented force
+model. This is tested.
+
+---
+
+## 13. Not modelled at all
 
 For the avoidance of doubt, none of the following exist:
 
 - Icing, precipitation, or any contamination effect on aerodynamics
-- Terrain other than a single flat plane with one runway
+- Buildings, vegetation, water, roads, or any scenery beyond the heightfield
 - Any navigation aid, radio, or air traffic environment
 - Thrust reversers (the rollout uses wheel brakes and speedbrake only)
 - Rotorcraft, propeller aircraft, or any non-fixed-wing configuration
@@ -326,7 +380,7 @@ For the avoidance of doubt, none of the following exist:
 
 ---
 
-## 12. Verification status
+## 14. Verification status
 
 Modelling limitations and *verification* limitations are different things.
 Every layer in this build has passing tests — see `README.md` for the count —

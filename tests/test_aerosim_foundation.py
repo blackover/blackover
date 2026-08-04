@@ -37,6 +37,7 @@ from aerosim.core.units import (
     wrap_pi,
 )
 from aerosim.env.atmosphere import Atmosphere, geometric_to_geopotential
+from aerosim.env.terrain import PROFILES, Terrain, flat_terrain
 
 
 # --------------------------------------------------------------------------
@@ -306,3 +307,77 @@ class TestAtmosphere:
         assert atmosphere.eas_from_tas(200.0, altitude) == pytest.approx(
             200.0 * math.sqrt(air.density_ratio)
         )
+
+
+# --------------------------------------------------------------------------
+# Terrain
+# --------------------------------------------------------------------------
+
+
+class TestTerrain:
+    def test_flat_profile_is_the_field_elevation_everywhere(self):
+        terrain = flat_terrain(field_elevation=250.0)
+        assert terrain.is_flat
+        for north, east in ((0.0, 0.0), (40000.0, -12000.0), (-90000.0, 90000.0)):
+            assert terrain.height_at(north, east) == 250.0
+
+    def test_airport_plateau_is_level(self):
+        # The runway, the flare and the gear model all assume level ground near
+        # the field. A hill in the touchdown zone would be a trap.
+        terrain = Terrain(seed=3, profile="mountainous", field_elevation=120.0)
+        for north in (-3000.0, 0.0, 3000.0):
+            for east in (-2000.0, 0.0, 2000.0):
+                assert terrain.height_at(north, east) == pytest.approx(120.0)
+
+    def test_relief_appears_outside_the_plateau(self):
+        terrain = Terrain(seed=3, profile="mountainous", field_elevation=120.0)
+        far = [terrain.height_at(n, 0.0) for n in np.linspace(20000.0, 80000.0, 40)]
+        assert max(far) - min(far) > 300.0
+
+    def test_scalar_and_vectorised_paths_agree_exactly(self):
+        # height_at() is a hand-written fast path, not a call into heights().
+        # If the two ever disagree the aircraft stands on ground that is not
+        # the ground being drawn, which is the one bug terrain must not have.
+        rng = np.random.default_rng(11)
+        north = rng.uniform(-70000.0, 70000.0, 250)
+        east = rng.uniform(-70000.0, 70000.0, 250)
+        for name in PROFILES:
+            terrain = Terrain(seed=5, profile=name, field_elevation=64.0)
+            grid = terrain.heights(north, east)
+            one_at_a_time = np.array(
+                [terrain.height_at(a, b) for a, b in zip(north, east)]
+            )
+            assert np.array_equal(grid, one_at_a_time)
+
+    def test_field_is_deterministic_across_instances(self):
+        a = Terrain(seed=42, profile="hilly")
+        b = Terrain(seed=42, profile="hilly")
+        assert a.height_at(31234.0, -8765.0) == b.height_at(31234.0, -8765.0)
+
+    def test_different_seeds_give_different_landscapes(self):
+        a = Terrain(seed=1, profile="hilly")
+        b = Terrain(seed=2, profile="hilly")
+        samples = np.linspace(20000.0, 60000.0, 25)
+        assert any(
+            a.height_at(n, 15000.0) != b.height_at(n, 15000.0) for n in samples
+        )
+
+    def test_amplitude_ranks_with_the_profile(self):
+        def relief(name):
+            terrain = Terrain(seed=8, profile=name)
+            north, east = np.meshgrid(
+                np.linspace(20000.0, 90000.0, 60),
+                np.linspace(20000.0, 90000.0, 60),
+            )
+            heights = terrain.heights(north, east)
+            return float(heights.max() - heights.min())
+
+        ordered = ["flat", "gentle", "rolling", "hilly", "mountainous"]
+        values = [relief(name) for name in ordered]
+        assert all(a < b for a, b in zip(values, values[1:]))
+
+    def test_highest_within_bounds_the_samples_it_covers(self):
+        terrain = Terrain(seed=6, profile="mountainous")
+        peak = terrain.highest_within(40000.0, 40000.0, 5000.0, samples=11)
+        assert peak >= terrain.height_at(40000.0, 40000.0)
+        assert peak >= terrain.height_at(43000.0, 42000.0)

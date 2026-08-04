@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..core import frames
+from ..core.frames import cross3
 from ..core.state import IX_QUAT, IX_RATE, IX_VEL, State
 from ..core.units import G0
 from ..env.atmosphere import Atmosphere
@@ -92,16 +93,23 @@ class FlightDynamics:
         atmosphere: Atmosphere | None = None,
         wind: WindField | None = None,
         field_elevation: float = 0.0,
+        terrain=None,
     ) -> None:
         self.model = model
         self.atmosphere = atmosphere or Atmosphere()
         self.wind = wind or WindField()
         self.field_elevation = field_elevation
+        # One heightfield, shared with the renderer. Terrain you can see but
+        # cannot hit is worse than none, because the picture then contradicts
+        # the simulation it is supposed to be showing.
+        self.terrain = terrain
 
         self.aero = AeroModel(model)
         self.propulsion = PropulsionModel(model)
         self.mass_model = MassModel(model)
-        self.gear = GearModel(model, terrain_elevation=field_elevation)
+        self.gear = GearModel(
+            model, terrain=terrain, terrain_elevation=field_elevation
+        )
 
         self.vmo = model.get("limitations", "vmo")
         self.mmo = model.get("limitations", "mmo")
@@ -138,6 +146,12 @@ class FlightDynamics:
         """Height of the reference point above the wheels, in metres."""
         return self.gear.lowest_point
 
+    def ground_height(self, north: float = 0.0, east: float = 0.0) -> float:
+        """Terrain elevation under a position."""
+        if self.terrain is None:
+            return self.field_elevation
+        return self.terrain.height_at(north, east)
+
     def place_on_ground(self, state: State) -> None:
         """Sit the aircraft on its wheels, struts already at static compression.
 
@@ -147,7 +161,8 @@ class FlightDynamics:
         the deflection its own weight produces skips both.
         """
         static = self.model.get("landing_gear", "static_deflection", 0.2)
-        state.x[2] = -(self.field_elevation + self.gear.lowest_point - static)
+        ground = self.ground_height(float(state.x[0]), float(state.x[1]))
+        state.x[2] = -(ground + self.gear.lowest_point - static)
 
     # -- one step ----------------------------------------------------------
 
@@ -238,7 +253,9 @@ class FlightDynamics:
         velocity_body = x[IX_VEL]
         rates = x[IX_RATE]
         altitude = -float(x[2])
-        height_agl = max(0.0, altitude - self.field_elevation)
+        height_agl = max(
+            0.0, altitude - self.ground_height(float(x[0]), float(x[1]))
+        )
 
         # Air-relative velocity: subtract the wind, in body axes.
         wind_body = frames.dcm_ned_to_body(quaternion) @ self._wind_ned
@@ -269,9 +286,9 @@ class FlightDynamics:
         # transfer them to the CG. Omitting this is the defect that makes the
         # published Cm disagree with the physics precisely when it is examined.
         aero_ref = np.array([self.aero.aero_ref_x, 0.0, 0.0])
-        aero_moment = aero.moment_body + np.cross(aero_ref - cg, aero.force_body)
+        aero_moment = aero.moment_body + cross3(aero_ref - cg, aero.force_body)
 
-        thrust_moment = self._frozen_thrust_moment + np.cross(
+        thrust_moment = self._frozen_thrust_moment + cross3(
             -cg, self._frozen_thrust
         )
 
@@ -284,7 +301,7 @@ class FlightDynamics:
             brake=controls.brake,
             steering=controls.steering,
         )
-        gear_moment = gear.moment_body + np.cross(-cg, gear.force_body)
+        gear_moment = gear.moment_body + cross3(-cg, gear.force_body)
 
         weight = gravity_body(quaternion, mass_properties.mass)
 
@@ -329,7 +346,10 @@ class FlightDynamics:
         derived.veas = self.atmosphere.eas_from_tas(vtas, altitude)
         derived.vcas = self.atmosphere.cas_from_tas(vtas, altitude)
         derived.altitude = altitude
-        derived.altitude_agl = max(0.0, altitude - self.field_elevation)
+        ground = self.ground_height(
+            float(state.x[0]), float(state.x[1])
+        )
+        derived.altitude_agl = max(0.0, altitude - ground)
         derived.density = air_now.density
         derived.temperature = air_now.temperature
         derived.pressure = air_now.pressure
@@ -401,15 +421,22 @@ class FlightDynamics:
                 f"wing strike at {math.degrees(abs(derived.roll)):.0f} deg bank"
             )
 
-        # Reference point at or below the terrain plane: gear-up contact, or a
-        # nose-first impact the struts never got a chance to absorb.
+        # Reference point at or below the ground: gear-up contact, a nose-first
+        # impact the struts never got a chance to absorb, or a hillside.
         if derived.altitude_agl <= 0.0:
             diagnostics.crashed = True
-            diagnostics.crash_reason = (
-                "ground contact with gear retracted"
-                if not self.controls.gear_down
-                else "terrain impact"
-            )
+            ground = self.ground_height(float(state.x[0]), float(state.x[1]))
+            if ground > self.field_elevation + 25.0:
+                # Well above field elevation: this is rising ground, not the
+                # airport, and calling it a landing accident would misdescribe
+                # what happened.
+                diagnostics.crash_reason = (
+                    f"terrain impact at {ground:.0f} m elevation"
+                )
+            elif not self.controls.gear_down:
+                diagnostics.crash_reason = "ground contact with gear retracted"
+            else:
+                diagnostics.crash_reason = "terrain impact"
 
         # -- envelope monitoring -------------------------------------------
         if derived.vcas > self.vmo:

@@ -257,18 +257,47 @@ class Panel:
         self.load_positive = model.get("limitations", "load_factor_positive", 2.5)
         self.is_military = model.category == "military"
 
+    # The status column carries eleven labelled rows and a stick box beside
+    # them. Below this width they overlap each other rather than the column
+    # simply looking tight, so the stick block moves under the rows instead.
+    STATUS_WIDE = 190
+
     def layout(self, rect: pygame.Rect) -> None:
         self.rect = rect
         pad = 10
         height = rect.height - 2 * pad
         ai_size = min(height, int(rect.width * 0.26))
 
-        self.ai_rect = pygame.Rect(rect.x + int(rect.width * 0.235), rect.y + pad, ai_size, height)
+        # The status column is the one part of the panel with a hard minimum:
+        # everything else can be squeezed, but its rows are text. Placing the
+        # attitude indicator at a fixed fraction of the window looked right at
+        # the size it was designed against and collided with itself at a
+        # smaller one, which is what the demo recordings run at.
+        status_width = max(self.STATUS_WIDE, int(rect.width * 0.16))
+        # 104 for the speed tape and its gap, 2 * pad for the status margins:
+        # the offset is what the layout below actually consumes, not a guess.
+        ai_x = max(rect.x + int(rect.width * 0.235), rect.x + status_width + 104 + 2 * pad)
+
+        self.ai_rect = pygame.Rect(ai_x, rect.y + pad, ai_size, height)
         self.speed_rect = pygame.Rect(self.ai_rect.x - 104, rect.y + pad, 96, height)
         self.alt_rect = pygame.Rect(self.ai_rect.right + 8, rect.y + pad, 104, height)
         self.vsi_rect = pygame.Rect(self.alt_rect.right + 8, rect.y + pad, 62, height)
+
+        # Engine gauges take only the width their engines need; whatever is
+        # left over goes to the strip charts. On the single-engine fighter
+        # that is most of the panel, which is exactly where a wide, mostly
+        # empty engine box used to be.
+        remaining = rect.right - self.vsi_rect.right - 24
+        engines = max(1, len(getattr(getattr(self.sim, "fdm", None), "propulsion").engines))
+        engine_width = min(max(150, 96 * engines + 44), remaining)
         self.engine_rect = pygame.Rect(
-            self.vsi_rect.right + 12, rect.y + pad, max(150, rect.right - self.vsi_rect.right - 24), height
+            self.vsi_rect.right + 12, rect.y + pad, engine_width, height
+        )
+        chart_width = rect.right - self.engine_rect.right - 22
+        self.chart_rect = (
+            pygame.Rect(self.engine_rect.right + 10, rect.y + pad, chart_width, height)
+            if chart_width >= 90
+            else pygame.Rect(0, 0, 0, 0)
         )
         self.status_rect = pygame.Rect(rect.x + pad, rect.y + pad, self.speed_rect.x - rect.x - 2 * pad, height)
 
@@ -450,6 +479,11 @@ class Panel:
             ("OAT", f"{derived.temperature - 273.15:+5.1f} C", DIM),
         ]
 
+        # A narrow panel drops the rows that are diagnostic rather than
+        # operational, so the ones a pilot flies on stay legible.
+        if rect.width < self.STATUS_WIDE:
+            rows = [row for row in rows if row[0] not in ("TRK", "L/D", "CG", "OAT")]
+
         for label, value, colour in rows:
             draw_text(surface, self.fonts.tiny, label, (x, y), DIM)
             draw_text(surface, self.fonts.small, value, (x + 54, y - 2), colour)
@@ -459,7 +493,7 @@ class Panel:
         # limited surface is visible as a divergence between commanded and
         # actual rather than only as odd handling.
         surfaces = sim.surfaces
-        box = pygame.Rect(rect.right - 78, rect.y + 4, 66, 66)
+        box = pygame.Rect(max(rect.x + 118, rect.right - 78), rect.y + 4, 66, 66)
         pygame.draw.rect(surface, INSTRUMENT_BG, box)
         pygame.draw.rect(surface, PANEL_EDGE, box, 1)
         pygame.draw.line(surface, (40, 46, 56), (box.centerx, box.y), (box.centerx, box.bottom), 1)

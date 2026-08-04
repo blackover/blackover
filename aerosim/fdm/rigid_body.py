@@ -16,6 +16,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..core import frames
+from ..core.frames import cross3
 from ..core.state import IX_POS, IX_QUAT, IX_RATE, IX_VEL, N_STATES
 from ..core.units import G0
 
@@ -44,13 +45,13 @@ def state_derivative(
 
     # Translation in a rotating frame: the cross term is what makes a
     # coordinated turn work rather than a straight line with a rolled attitude.
-    dx[IX_VEL] = force_body / mass - np.cross(omega, velocity_body)
+    dx[IX_VEL] = force_body / mass - cross3(omega, velocity_body)
 
     # Attitude.
     dx[IX_QUAT] = frames.quat_derivative(quaternion, omega)
 
     # Rotation: Euler's equation with the full gyroscopic coupling term.
-    dx[IX_RATE] = inertia_inverse @ (moment_body - np.cross(omega, inertia @ omega))
+    dx[IX_RATE] = inertia_inverse @ (moment_body - cross3(omega, inertia @ omega))
 
     return dx
 
