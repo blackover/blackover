@@ -97,6 +97,7 @@ class Simulation:
         self._failure_armed = conditions.failure != FailureMode.NONE
         self._failure_fired = False
         self.pitch_trim = 0.0
+        self._autopilot_elevator = 0.0
         self._recent: dict[str, float] = {}
 
         self.initialise()
@@ -360,6 +361,7 @@ class Simulation:
         if autopilot.engaged:
             if self.autopilot.vertical is not VerticalMode.OFF and abs(pilot.pitch) < 0.02:
                 elevator = autopilot.elevator
+                self._autopilot_elevator = elevator
             elif abs(pilot.pitch) >= 0.02:
                 self._disengage("pitch axis, pilot input")
 
@@ -384,8 +386,21 @@ class Simulation:
 
     def _disengage(self, reason: str) -> None:
         if self.autopilot.engaged:
+            self.handover_trim()
             self.autopilot.disengage()
             self.log("CAUTION", f"autopilot disengaged: {reason}")
+
+    def handover_trim(self) -> None:
+        """Bumpless transfer: hand the pilot the surface the autopilot held.
+
+        The autopilot's elevator is mostly integrator state. Dropping it and
+        reverting to the stored trim steps the surface by however much that
+        integrator had accumulated, which the pilot feels as a jolt at the
+        exact moment they take over -- and which is worst during a manoeuvre,
+        because that is when the integrator is furthest from the trim value.
+        """
+        if self.autopilot.vertical is not VerticalMode.OFF:
+            self.pitch_trim = max(-0.9, min(0.9, self._autopilot_elevator))
 
     # -- systems -----------------------------------------------------------
 
@@ -448,7 +463,11 @@ class Simulation:
     def _health_checks(self, diagnostics) -> None:
         for message in diagnostics.events:
             severity = "WARNING" if message.startswith(("STALL", "OVER", "FUEL")) else "INFO"
-            self.log(severity, message)
+            # Key on the message's first word. "OVER-G 2.9 g above 2.5 g limit"
+            # is never textually identical twice running, so keying on the
+            # whole message throttles nothing and the log fills with four
+            # readings of the same exceedance.
+            self.log(severity, message, key=message.split(" ", 1)[0])
 
         if diagnostics.out_of_envelope:
             self.log(

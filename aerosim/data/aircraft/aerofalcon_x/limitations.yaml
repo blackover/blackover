@@ -18,6 +18,10 @@ vlo: "300 kt"
 
 load_factor_positive: 9.0
 load_factor_negative: -3.0
+# Extending flaps lowers the structural limit sharply, which is why the
+# envelope monitor checks the placard for the configuration the aircraft is
+# actually in rather than the clean one.
+load_factor_positive_flaps: 4.0
 load_factor_positive_stores: 5.5
 
 max_touchdown_rate: "5.0 m/s"

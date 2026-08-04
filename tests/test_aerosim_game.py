@@ -233,6 +233,50 @@ class TestAutopilot:
         run(sim, 240.0)
         assert abs(sim.fdm.state.derived.vcas - target) < kt(12)
 
+    def test_handover_is_bumpless(self, model):
+        # The autopilot's elevator is mostly integrator state. Dropping it on
+        # disengage steps the surface by whatever had accumulated, and the
+        # pilot feels a jolt at the exact moment they take over.
+        conditions = SimConditions(
+            aircraft=model.name, start_mode=StartMode.AIRBORNE, altitude=ft(12000)
+        )
+        sim = Simulation(model, conditions)
+        sim.autopilot.hold_altitude(sim.fdm.state.derived.altitude + ft(700))
+        sim.autopilot.hold_speed(sim.fdm.state.derived.vcas)
+        run(sim, 40.0)  # let the integrator charge on the climb
+
+        elevator_before = sim.surfaces.elevator.position
+        sim.handover_trim()
+        sim.autopilot.disengage()
+        run(sim, 1.0)
+        assert sim.surfaces.elevator.position == pytest.approx(
+            elevator_before, abs=0.12
+        ), "elevator stepped on handover"
+
+    def test_handover_stores_what_the_autopilot_held(self, model):
+        # The invariant the fix establishes. How large a step it avoids depends
+        # on the aircraft and the manoeuvre -- on the fighter, whose trim
+        # elevator is already near the autopilot's, it is small -- so the test
+        # asserts what is always true rather than a difference that is not.
+        conditions = SimConditions(
+            aircraft=model.name, start_mode=StartMode.AIRBORNE, altitude=ft(12000)
+        )
+        sim = Simulation(model, conditions)
+        sim.autopilot.hold_altitude(sim.fdm.state.derived.altitude + ft(4000))
+        sim.autopilot.hold_speed(sim.fdm.state.derived.vcas)
+        run(sim, 12.0)  # still climbing, integrator charged
+
+        held = sim._autopilot_elevator
+        sim.handover_trim()
+        assert sim.pitch_trim == pytest.approx(held, abs=1e-9)
+
+    def test_handover_is_a_no_op_when_vertical_is_off(self, model):
+        # Nothing to hand over if the autopilot was not flying the pitch axis.
+        sim = Simulation(model, SimConditions(aircraft=model.name))
+        sim.pitch_trim = 0.123
+        sim.handover_trim()
+        assert sim.pitch_trim == pytest.approx(0.123)
+
     def test_pilot_input_disengages_the_axis(self, model):
         conditions = SimConditions(aircraft=model.name, start_mode=StartMode.AIRBORNE)
         sim = Simulation(model, conditions)

@@ -698,6 +698,57 @@ class TestIntegratedFlight:
             fdm.step(0.01, controls)
         assert abs(fdm.state.derived.beta) > deg(0.5)
 
+    def test_touchdown_loads_are_not_reported_as_over_g(self, model):
+        # A normal touchdown spikes the accelerometer to several g against a
+        # 2 g flaps placard. That is a landing, not an exceedance: manoeuvring
+        # limits apply in flight, and gear loads are checked by touchdown rate.
+        fdm = _build(model)
+        state = State.from_conditions(altitude=ft(60), vtas=75.0, pitch=deg(2.0))
+        controls = Controls(gear_down=True, flap=1.0, throttle=0.2)
+        fdm.reset(state, controls)
+
+        peak = 0.0
+        over_g = False
+        for _ in range(4000):
+            diagnostics = fdm.step(0.01, controls)
+            if fdm.state.on_ground:
+                peak = max(peak, fdm.state.derived.load_factor)
+                over_g = over_g or any(
+                    e.startswith("OVER-G") for e in diagnostics.events
+                )
+            if fdm.state.on_ground and fdm.state.derived.ground_speed < 5.0:
+                break
+
+        assert peak > 1.5, "the gear never loaded up, so the test proves nothing"
+        assert not over_g
+
+    def test_in_flight_over_g_is_still_flagged(self, model):
+        fdm = _build(model)
+        altitude = ft(5000)
+        air = fdm.atmosphere.sample(altitude)
+        mass = fdm.mass_properties.mass
+
+        # Pick a speed at which the aircraft can actually reach its placard.
+        # A fighter at cruise is lift-limited well below its 9 g limit, so a
+        # fixed test speed proves nothing about the monitor -- only that the
+        # wing ran out of lift first.
+        target = 1.4 * fdm.load_limit_positive
+        qbar = target * mass * G0 / (fdm.aero.wing_area * fdm.aero.cl_max)
+        vtas = math.sqrt(2.0 * qbar / air.density)
+
+        state = State.from_conditions(altitude=altitude, vtas=vtas)
+        fdm.reset(state)
+        controls = Controls(elevator=-1.0, throttle=1.0, gear_down=False)
+        flagged = False
+        for _ in range(400):
+            diagnostics = fdm.step(0.01, controls)
+            flagged = flagged or any(e.startswith("OVER-G") for e in diagnostics.events)
+        assert flagged, f"never exceeded {fdm.load_limit_positive} g at {vtas:.0f} m/s"
+
+    def test_flaps_lower_the_load_limit(self, model):
+        clean = _build(model)
+        assert clean.load_limit_positive_flaps <= clean.load_limit_positive
+
     def test_overspeed_is_flagged(self, model):
         fdm = _build(model)
         state = State.from_conditions(

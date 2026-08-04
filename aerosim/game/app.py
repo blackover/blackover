@@ -20,6 +20,7 @@ from ..core.frames import dcm_body_to_ned
 from ..core.model_package import PackageError, load_aircraft
 from ..core.orchestrator import Simulation
 from ..core.units import to_ft, to_kt
+from ..telemetry.recorder import TelemetryRecorder, default_run_dir
 from .config import DATA_ROOT, SimConditions
 from .instruments import (
     AMBER,
@@ -52,6 +53,7 @@ HELP_LINES = [
     ("SPACE", "speedbrake"),
     ("1 / 2 / 3", "autopilot: altitude hold, heading hold, speed hold"),
     ("0", "autopilot off"),
+    ("F5", "start and stop telemetry recording"),
     ("[ / ]", "chase camera closer and further"),
     ("P", "pause"),
     ("H", "this help"),
@@ -97,6 +99,9 @@ class Game:
         self.fonts = Fonts(1.0)
         self.conditions = SimConditions()
         self.show_help = False
+        self.recorder: TelemetryRecorder | None = None
+        self.record_from_start = False
+        self.last_run_dir = None
 
     # ---------------------------------------------------------------------
 
@@ -155,12 +160,16 @@ class Game:
         yaw_stick = VirtualStick(rate=2.6, centring=4.0)
 
         panel = self._make_panel(model, sim)
+        self.recorder = None
+        if self.record_from_start:
+            self._toggle_recording(sim)
 
         while True:
             wall_dt = self.clock.tick(60) / 1000.0
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
+                    self._stop_recording("window closed")
                     return False
                 if event.type == pygame.VIDEORESIZE:
                     self.surface = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
@@ -168,20 +177,52 @@ class Game:
                     panel = self._make_panel(model, sim)
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
+                        self._stop_recording("left the flight")
                         return True
                     action = self._handle_key(event, sim, renderer)
                     if action == "restart":
+                        self._stop_recording("restarted")
                         return self.fly()
 
             self._read_axes(sim, wall_dt, pitch_stick, roll_stick, yaw_stick)
 
             for _ in range(accumulator.add(wall_dt)):
                 sim.step()
+                if self.recorder is not None:
+                    self.recorder.sample(sim)
                 if sim.crashed:
+                    self._stop_recording(sim.crash_reason or "crashed")
                     break
 
             self._draw(sim, renderer, panel, mesh, model, runway, wall_dt)
             pygame.display.flip()
+
+    # -- telemetry ---------------------------------------------------------
+
+    def _toggle_recording(self, sim) -> None:
+        if self.recorder is not None:
+            self._stop_recording("stopped by the pilot")
+            return
+
+        run_dir = default_run_dir()
+        try:
+            self.recorder = TelemetryRecorder(run_dir, sim.model, sim.conditions)
+        except OSError as exc:
+            sim.log("CAUTION", f"could not start recording: {exc}")
+            self.recorder = None
+            return
+        self.last_run_dir = run_dir
+        sim.log("INFO", f"recording to {run_dir}")
+
+    def _stop_recording(self, reason: str) -> None:
+        if self.recorder is None:
+            return
+        manifest = self.recorder.close(reason)
+        self.recorder = None
+        print(
+            f"recorded {manifest.rows} samples over {manifest.duration_s:.1f} s "
+            f"to {self.last_run_dir}"
+        )
 
     def _make_panel(self, model, sim) -> Panel:
         width, height = self.surface.get_size()
@@ -230,8 +271,11 @@ class Game:
         elif key == pygame.K_3:
             sim.engage_speed_hold()
         elif key == pygame.K_0:
+            sim.handover_trim()
             sim.autopilot.disengage()
             sim.log("INFO", "autopilot off")
+        elif key == pygame.K_F5:
+            self._toggle_recording(sim)
         elif key == pygame.K_LEFTBRACKET:
             renderer.camera.distance = max(14.0, renderer.camera.distance - 8.0)
         elif key == pygame.K_RIGHTBRACKET:
@@ -317,6 +361,17 @@ class Game:
         y = 12
         for text, colour in lines:
             draw_text(surface, self.fonts.small, text, (14, y), colour)
+            y += 19
+
+        if self.recorder is not None:
+            pygame.draw.circle(surface, RED, (20, y + 7), 6)
+            draw_text(
+                surface,
+                self.fonts.small,
+                f"REC  {self.recorder.rows} samples",
+                (34, y),
+                RED,
+            )
             y += 19
 
         # Top-right: autopilot annunciation and the environment.
@@ -415,6 +470,136 @@ class Game:
             draw_text(
                 surface, self.fonts.small, subtitle, (view.centerx, rect.bottom + 16), DIM, "center"
             )
+
+    # -- replay ------------------------------------------------------------
+
+    def replay(self, run_dir) -> None:
+        """Animate a recorded run. Nothing here can advance the physics.
+
+        The session exposes the same objects the live simulation does, so the
+        renderer and the panel are unchanged -- and there is no code path from
+        either of them back into a flight model, because a replay does not have
+        one.
+        """
+        from ..telemetry.replay import ReplayError, ReplaySession, describe, load_run
+
+        try:
+            run = load_run(run_dir)
+            model = load_aircraft(DATA_ROOT / run.manifest.get("aircraft", ""))
+            session = ReplaySession(model, run)
+        except (ReplayError, PackageError, OSError) as exc:
+            self._show_error(str(exc))
+            return
+
+        if not run.hash_verified and run.hash_expected:
+            print(
+                f"WARNING: telemetry hash does not match the manifest.\n"
+                f"  expected {run.hash_expected}\n  actual   {run.hash_actual}\n"
+                "  The file has changed since it was recorded."
+            )
+
+        sky = Sky(session.conditions.time_of_day, session.conditions.visibility)
+        renderer = Renderer(self.surface, sky)
+        length = model.get("geometry", "fuselage_length", 30.0)
+        renderer.camera.distance = 1.75 * length
+        renderer.camera.height = 0.30 * length
+        mesh = build_mesh(model)
+        runway = Runway(
+            length=3200.0,
+            width=45.0,
+            heading=session.conditions.heading,
+            elevation=session.conditions.field_elevation,
+        )
+        panel = self._make_panel(model, session)
+        provenance = describe(run)
+        self._gear_detent = None
+
+        while True:
+            wall_dt = self.clock.tick(60) / 1000.0
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return
+                if event.type == pygame.VIDEORESIZE:
+                    self.surface = pygame.display.set_mode(
+                        (event.w, event.h), pygame.RESIZABLE
+                    )
+                    renderer.resize(self.surface)
+                    panel = self._make_panel(model, session)
+                if event.type == pygame.KEYDOWN:
+                    if event.key in (pygame.K_ESCAPE, pygame.K_q):
+                        return
+                    if event.key in (pygame.K_SPACE, pygame.K_p):
+                        session.paused = not session.paused
+                    elif event.key == pygame.K_h:
+                        self.show_help = not self.show_help
+                    elif event.key == pygame.K_LEFT:
+                        session.step_frames(-int(session.clock.rate_hz))
+                    elif event.key == pygame.K_RIGHT:
+                        session.step_frames(int(session.clock.rate_hz))
+                    elif event.key == pygame.K_HOME:
+                        session.apply(0)
+                    elif event.key == pygame.K_END:
+                        session.apply(run.rows - 1)
+                    elif event.key in (pygame.K_EQUALS, pygame.K_PLUS):
+                        session.playback_speed = min(8.0, session.playback_speed * 2.0)
+                    elif event.key == pygame.K_MINUS:
+                        session.playback_speed = max(0.125, session.playback_speed / 2.0)
+                    elif event.key == pygame.K_LEFTBRACKET:
+                        renderer.camera.distance = max(14.0, renderer.camera.distance - 8.0)
+                    elif event.key == pygame.K_RIGHTBRACKET:
+                        renderer.camera.distance = min(220.0, renderer.camera.distance + 8.0)
+
+            session.advance(wall_dt)
+            self._draw(session, renderer, panel, mesh, model, runway, wall_dt)
+            self._draw_replay_overlay(session, run, provenance)
+            pygame.display.flip()
+
+    def _draw_replay_overlay(self, session, run, provenance) -> None:
+        """Provenance, playhead and integrity, drawn over the replay."""
+        surface = self.surface
+        width, height = surface.get_size()
+        view = pygame.Rect(0, 0, width, height - int(height * PANEL_FRACTION))
+
+        # Provenance sits over sky or terrain depending on attitude, so it gets
+        # its own backdrop rather than relying on whatever is behind it.
+        card = pygame.Rect(view.centerx - 150, 6, 300, 30 + 15 * len(provenance))
+        backdrop = pygame.Surface(card.size, pygame.SRCALPHA)
+        backdrop.fill((10, 12, 17, 190))
+        surface.blit(backdrop, card.topleft)
+
+        draw_text(surface, self.fonts.medium, "REPLAY", (view.centerx, 10), CYAN, "midtop")
+        y = 34
+        for line in provenance:
+            colour = (
+                RED
+                if "NOT VERIFIED" in line
+                else (GREEN if "verified" in line else (170, 178, 192))
+            )
+            draw_text(surface, self.fonts.tiny, line, (view.centerx, y), colour, "midtop")
+            y += 15
+
+        # Playhead.
+        bar = pygame.Rect(view.x + 40, view.bottom - 22, view.width - 80, 8)
+        strip = pygame.Surface((view.width, 42), pygame.SRCALPHA)
+        strip.fill((10, 12, 17, 175))
+        surface.blit(strip, (view.x, bar.y - 22))
+        pygame.draw.rect(surface, (30, 34, 42), bar, border_radius=4)
+        pygame.draw.rect(
+            surface, CYAN, (bar.x, bar.y, int(bar.width * session.progress), bar.height),
+            border_radius=4,
+        )
+        pygame.draw.rect(surface, DIM, bar, 1, border_radius=4)
+        draw_text(
+            surface,
+            self.fonts.tiny,
+            f"{session.time:6.1f} / {session.duration:.1f} s"
+            f"    x{session.playback_speed:g}"
+            f"    {'PAUSED' if session.paused else 'PLAYING'}"
+            "    SPACE pause   arrows scrub   +/- speed   ESC exit",
+            (bar.x, bar.y - 15),
+            AMBER if session.paused else (170, 178, 192),
+        )
 
     def _show_error(self, message: str) -> None:
         self.surface.fill((16, 10, 10))

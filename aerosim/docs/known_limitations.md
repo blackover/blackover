@@ -251,7 +251,31 @@ noise, bias, drift and latency are *not* represented in this build.
 
 ---
 
-## 9. Not modelled at all
+## 9. Telemetry and replay
+
+**Simplification.** Telemetry is sampled at a fixed rate (50 Hz by default)
+from a kernel running at 100 Hz, so a recording is a *decimated* view of the
+run rather than every step of it.
+
+**Consequence.** A replay reproduces the sampled states exactly, but anything
+that happened between samples is not in the file. A control transient shorter
+than 20 ms — an actuator hitting a rate limit for a single step, say — can be
+invisible in a recording of a run where it demonstrably occurred. Raise the
+sample rate to the kernel rate if that matters.
+
+**Also.** Ground speed, track and flight path angle are recomputed on load
+rather than stored, because they are exactly recoverable from the thirteen
+states and a second stored copy is a number that can disagree with the first.
+Lift and drag coefficients are not recorded at all.
+
+**What the hash does and does not tell you.** The SHA-256 in the manifest
+covers the telemetry file only. It detects a changed or truncated recording.
+It says nothing about whether the model that produced it was correct — that is
+what the package checksum, the confidence ratings and the test suite are for.
+
+---
+
+## 10. Not modelled at all
 
 For the avoidance of doubt, none of the following exist:
 
@@ -268,7 +292,7 @@ For the avoidance of doubt, none of the following exist:
 
 ---
 
-## 10. Verification status
+## 11. Verification status
 
 Modelling limitations and *verification* limitations are different things.
 Every layer in this build has passing tests — see `README.md` for the count —

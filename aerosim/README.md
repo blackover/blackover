@@ -15,7 +15,9 @@ where the aircraft is.
 
 ```bash
 pip install -r requirements-aerosim.txt
-python -m aerosim
+python -m aerosim                      # fly
+python -m aerosim --record             # fly, recording telemetry from the start
+python -m aerosim --replay runs/<dir>  # watch a recorded run back
 ```
 
 Requires Python 3.10+ with pygame, NumPy and PyYAML. Developed against
@@ -71,6 +73,7 @@ Chase view above, full instrument panel below.
 | `SPACE` | speedbrake |
 | `1` `2` `3` | autopilot: altitude hold, heading hold, speed hold |
 | `0` | autopilot off |
+| `F5` | start / stop telemetry recording |
 | `[` `]` | chase camera closer and further |
 | `P` `H` `R` `ESC` | pause, help, restart, back to setup |
 
@@ -90,6 +93,47 @@ rate-limited surface reads as a divergence between the two rather than only as
 odd handling.
 
 ---
+
+## Telemetry and replay
+
+`F5` in flight starts recording. Each run writes a timestamped directory:
+
+```
+runs/2026-08-04-070312/
+├── telemetry.csv    one row per sample, header names carrying their units
+└── manifest.yaml    what produced it, and a SHA-256 over the CSV
+```
+
+The manifest is the point. Telemetry on its own is a pile of numbers that
+cannot be attributed to anything; telemetry beside a manifest naming the model
+version, its package checksum, the seed and every pre-flight condition can be
+reproduced, and the hash says whether it is still the file that was written.
+
+```bash
+python -m aerosim --replay runs/2026-08-04-070312
+```
+
+The replay animates the run with the same chase view and the same panel, and
+prints a warning if the telemetry no longer matches its hash. **It has no
+kernel.** It reads telemetry and nothing else — there is deliberately no code
+path from a replay into the flight model, and a test asserts that neither the
+session nor its `fdm` has a `step` method. That is what makes a replay usable
+as evidence: what you are watching is what was recorded, not a re-simulation
+that might have diverged from it.
+
+Columns are per-engine rather than averaged. A single mean N1 would show two
+healthy engines at reduced power during an engine-out instead of one failed and
+one at maximum, which is the entire point of that scenario.
+
+Sample rate is independent of step size, so a run flown at dt = 0.005 and one
+at dt = 0.01 produce comparable files.
+
+| Key in replay | |
+|---|---|
+| `SPACE` | pause |
+| arrows | scrub one second |
+| `+` `-` | playback speed, 0.125x to 8x |
+| `HOME` `END` | jump to start or end |
 
 ## The two aircraft
 
@@ -192,6 +236,9 @@ aerosim/
 ├── control/
 │   ├── actuators.py        rate/position limits, jam, runaway, reduced authority
 │   └── autopilot.py        mode state machine, cascaded control laws
+├── telemetry/
+│   ├── recorder.py         buffered CSV, run manifest, integrity hash
+│   └── replay.py           reads telemetry and feeds nothing back
 ├── game/
 │   ├── config.py           the pre-flight conditions object
 │   ├── setup_screen.py     condition entry and live briefing
@@ -271,6 +318,7 @@ model that still flies.
 python -m pytest tests/test_aerosim_foundation.py -q   # units, frames, clock, atmosphere
 python -m pytest tests/test_aerosim_dynamics.py -q     # tables, aero, mass, engines, trim
 python -m pytest tests/test_aerosim_game.py -q         # orchestrator, autopilot, renderer
+python -m pytest tests/test_aerosim_telemetry.py -q    # recording, integrity, replay
 ```
 
 Tests fall into three deliberately distinct categories:
@@ -293,7 +341,7 @@ harder to diagnose later than a failed assertion now.
 
 ### Defects the suite and the build found
 
-Seven, all in code that appeared to work:
+Nine, all in code that appeared to work:
 
 1. **Trim solved a different model from the one being flown.** The trim solver
    assembled thrust forces itself and omitted the engine-position moment the
@@ -317,7 +365,17 @@ Seven, all in code that appeared to work:
 6. **Approach speed taken from the cruise setting.** Put a narrow-body over the
    threshold at 280 kt with full flap, far past VFE, where no trim solution
    exists that is not a dive.
-7. **An altitude-hold cascade that flew into the ground.** Three faults
+7. **A normal landing reported as a structural exceedance.** The manoeuvring
+   g limit was applied on the ground, where the accelerometer is reading strut
+   loads. A 2.3 m/s touchdown spikes to 4 g against a 2 g flaps placard, so
+   every landing logged OVER-G. The flare itself peaks at 1.12 g; gear loads
+   are a different case, already covered by the touchdown-rate check.
+8. **An autopilot handover that jolted the controls.** Disengaging discarded
+   the integrator state and reverted the elevator to the stored trim, stepping
+   the surface at the exact moment the pilot took over. Worst mid-manoeuvre,
+   where the integrator is furthest from trim — taking over during a flare
+   turned a 2.4 m/s touchdown into 7 m/s.
+9. **An altitude-hold cascade that flew into the ground.** Three faults
    compounding: the vertical-speed gain demanded 29° of pitch per 10 m/s of
    error, so it pinned the pitch limit; the feed-forward used instantaneous
    alpha, and since alpha = pitch − gamma it chased its own output and

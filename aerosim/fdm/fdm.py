@@ -107,6 +107,9 @@ class FlightDynamics:
         self.mmo = model.get("limitations", "mmo")
         self.load_limit_positive = model.get("limitations", "load_factor_positive", 2.5)
         self.load_limit_negative = model.get("limitations", "load_factor_negative", -1.0)
+        self.load_limit_positive_flaps = model.get(
+            "limitations", "load_factor_positive_flaps", self.load_limit_positive
+        )
         self.max_touchdown_rate = model.get("limitations", "max_touchdown_rate", 3.7)
 
         self.state = State()
@@ -418,13 +421,23 @@ class FlightDynamics:
             diagnostics.overspeed = True
             diagnostics.events.append(f"MACH {derived.mach:.2f} above MMO")
 
-        if derived.load_factor > self.load_limit_positive:
-            diagnostics.events.append(
-                f"OVER-G {derived.load_factor:.1f} g above "
-                f"{self.load_limit_positive:.1f} g limit"
-            )
-        elif derived.load_factor < self.load_limit_negative:
-            diagnostics.events.append(f"NEGATIVE-G {derived.load_factor:.1f} g")
+        # Manoeuvring load limits apply in flight only. On the ground the
+        # accelerometer is reading strut loads, and a normal touchdown spikes
+        # to several g against a 2 g flaps placard -- which is not an
+        # exceedance, it is a landing. Gear loads have their own limit, checked
+        # above as max_touchdown_rate.
+        if not touching:
+            # Flaps lower the structural limit, so the placard that applies is
+            # the one for the configuration the aircraft is actually in.
+            limit = self.load_limit_positive
+            if self.controls.flap > 0.01:
+                limit = min(limit, self.load_limit_positive_flaps)
+            if derived.load_factor > limit:
+                diagnostics.events.append(
+                    f"OVER-G {derived.load_factor:.1f} g above {limit:.1f} g limit"
+                )
+            elif derived.load_factor < self.load_limit_negative:
+                diagnostics.events.append(f"NEGATIVE-G {derived.load_factor:.1f} g")
 
         if aero is not None and aero.stalled:
             diagnostics.events.append("STALL")
