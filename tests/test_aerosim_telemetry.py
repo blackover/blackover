@@ -7,7 +7,6 @@ of that are asserted below.
 
 from __future__ import annotations
 
-import math
 import os
 import sys
 from pathlib import Path
@@ -23,7 +22,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from aerosim.core.model_package import load_aircraft
 from aerosim.core.orchestrator import Simulation
-from aerosim.core.units import deg, ft, to_kt
 from aerosim.game.config import FailureMode, SimConditions, StartMode
 from aerosim.telemetry.recorder import TelemetryRecorder, default_run_dir, engine_columns
 from aerosim.telemetry.replay import (

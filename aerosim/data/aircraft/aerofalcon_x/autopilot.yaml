@@ -12,6 +12,23 @@ max_vertical_speed: "12000 fpm"
 # cascade, not the airframe: a stepped inner target saturates the pitch loop.
 pitch_command_rate: "6.0 deg/s"
 
+# Autoland. Shorter, firmer and flown faster than the transport: the fighter
+# approaches at a higher Vref on a smaller wing, and a long float would run it
+# out of runway rather than settle it.
+autoland:
+  vref_factor: 1.28
+  flare_height: "24 m"
+  flare_exponent: 1.20
+  flare_base_rate: "0.45 m/s"
+  flare_entry_rate: "3.00 m/s"
+  retard_height: "5 m"
+  gear_range: "7000 m"
+  flap_half_range: "11000 m"
+  flap_full_range: "6000 m"
+  faf_range: "11000 m"
+  capture_cross: "2500 m"
+  max_bank: "30 deg"
+
 gains:
   altitude_kp: 0.045
   altitude_ki: 0.0

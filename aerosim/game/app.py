@@ -52,7 +52,9 @@ HELP_LINES = [
     ("B", "wheel brakes (hold)"),
     ("SPACE", "speedbrake"),
     ("1 / 2 / 3", "autopilot: altitude hold, heading hold, speed hold"),
-    ("0", "autopilot off"),
+    ("4", "AUTO FLY  -- takes off, climbs and cruises by itself"),
+    ("5", "AUTOLAND  -- routes to the runway, lands and stops"),
+    ("0", "autopilot and autoflight off"),
     ("F5", "start and stop telemetry recording"),
     ("[ / ]", "chase camera closer and further"),
     ("P", "pause"),
@@ -270,7 +272,12 @@ class Game:
             sim.engage_heading_hold()
         elif key == pygame.K_3:
             sim.engage_speed_hold()
+        elif key == pygame.K_4:
+            sim.engage_autoflight()
+        elif key == pygame.K_5:
+            sim.engage_autoland()
         elif key == pygame.K_0:
+            sim.disengage_autoflight()
             sim.handover_trim()
             sim.autopilot.disengage()
             sim.log("INFO", "autopilot off")
@@ -374,13 +381,25 @@ class Game:
             )
             y += 19
 
-        # Top-right: autopilot annunciation and the environment.
-        annunciation = sim.autopilot.annunciation()
+        # Top-right: autoflight phase over the autopilot mode, then the
+        # environment.
+        auto = getattr(sim, "autoflight", None)
+        top = 12
+        if auto is not None and auto.annunciation():
+            draw_text(
+                surface,
+                self.fonts.medium,
+                auto.annunciation(),
+                (view.right - 14, top),
+                GREEN,
+                "topright",
+            )
+            top += 24
         draw_text(
             surface,
-            self.fonts.medium,
-            annunciation,
-            (view.right - 14, 12),
+            self.fonts.medium if top == 12 else self.fonts.small,
+            sim.autopilot.annunciation(),
+            (view.right - 14, top),
             MAGENTA if sim.autopilot.engaged else DIM,
             "topright",
         )

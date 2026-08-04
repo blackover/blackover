@@ -26,6 +26,8 @@ import math
 from dataclasses import dataclass
 
 from ..control.actuators import ActuatorFailure, ControlSurfaces
+from ..control.autoflight import AutoFlight
+from ..control.autoflight import Runway as GuidanceRunway
 from ..control.autopilot import Autopilot, LateralMode, ThrustMode, VerticalMode
 from ..env.atmosphere import Atmosphere
 from ..env.wind import TURBULENCE_PRESETS, WindField
@@ -83,6 +85,13 @@ class Simulation:
         )
         self.surfaces = ControlSurfaces(model)
         self.autopilot = Autopilot(model)
+        self.autoflight = AutoFlight(
+            model,
+            GuidanceRunway(
+                heading=conditions.heading,
+                elevation=conditions.field_elevation,
+            ),
+        )
 
         self.pilot = PilotInput()
         self.throttle = 0.0
@@ -280,6 +289,12 @@ class Simulation:
 
         # 1 -- failure triggers
         self._evaluate_failures()
+
+        # 1b -- autoflight moves the autopilot's targets, before the autopilot
+        # reads them. It commands through the same cascade the pilot does; it
+        # is not a second set of control laws.
+        self.autoflight.update(self, dt)
+        self._drain_autoflight()
 
         # 2 -- pilot or autopilot produce commands
         elevator_cmd, aileron_cmd, rudder_cmd, throttle_cmd = self._commands(dt, derived)
@@ -488,6 +503,36 @@ class Simulation:
     @property
     def time(self) -> float:
         return self.clock.time
+
+    def _drain_autoflight(self) -> None:
+        """Move the autoflight's announcements into the event log.
+
+        Each message is its own throttle key. Grouping them -- by the word
+        before the colon, say -- means every phase transition shares one key,
+        and "flaps up" one second after "climbing to 8000 ft" is discarded as
+        a repeat of a message it has nothing to do with.
+        """
+        for message in self.autoflight.drain_events():
+            self.log("INFO", message)
+
+    def engage_autoflight(self) -> None:
+        """Hand the whole flight to the autoflight system."""
+        self.autoflight.engage(self)
+        self._drain_autoflight()
+
+    def engage_autoland(self) -> None:
+        """Route to the runway and land."""
+        if not self.autoflight.engaged:
+            self.autoflight.engage(self)
+        self.autoflight.arm_landing(self)
+        self._drain_autoflight()
+
+    def disengage_autoflight(self) -> None:
+        was_engaged = self.autoflight.engaged
+        self.autoflight.disengage(self)
+        self._drain_autoflight()
+        if was_engaged:
+            self.log("CAUTION", "autoflight disengaged, you have the aircraft")
 
     def engage_altitude_hold(self) -> None:
         self.autopilot.hold_altitude(self.fdm.state.derived.altitude)

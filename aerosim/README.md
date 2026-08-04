@@ -14,14 +14,24 @@ where the aircraft is.
 ## Running it
 
 ```bash
-pip install -r requirements-aerosim.txt
-python -m aerosim                      # fly
-python -m aerosim --record             # fly, recording telemetry from the start
-python -m aerosim --replay runs/<dir>  # watch a recorded run back
+python play.py
 ```
 
-Requires Python 3.10+ with pygame, NumPy and PyYAML. Developed against
-Python 3.11, pygame 2.6.1, NumPy 2.4.6.
+That is the whole thing. If pygame, NumPy or PyYAML are missing it offers to
+install them first, so a fresh checkout needs no setup step. On Windows you can
+double-click `run-flightsim.bat`; on Linux or macOS, `./run-flightsim.sh`.
+
+```bash
+python play.py --record             # fly, recording telemetry from the start
+python play.py --replay runs/<dir>  # watch a recorded run back
+```
+
+Requires Python 3.10+. Developed against Python 3.11, pygame 2.6.1,
+NumPy 2.4.6. `python -m aerosim` works too if you would rather install the
+dependencies yourself from `requirements-aerosim.txt`.
+
+**In a hurry?** Start the flight, press `4`, then `5`. The aircraft takes off,
+climbs, routes itself to the runway and lands, and you can watch.
 
 ```bash
 python -m pytest tests/test_aerosim_*.py -q     # the test suite
@@ -72,7 +82,9 @@ Chase view above, full instrument panel below.
 | `B` | wheel brakes |
 | `SPACE` | speedbrake |
 | `1` `2` `3` | autopilot: altitude hold, heading hold, speed hold |
-| `0` | autopilot off |
+| `4` | **AUTO FLY** — takes off, climbs and cruises by itself |
+| `5` | **AUTOLAND** — routes to the runway, lands and stops |
+| `0` | autopilot and autoflight off |
 | `F5` | start / stop telemetry recording |
 | `[` `]` | chase camera closer and further |
 | `P` `H` `R` `ESC` | pause, help, restart, back to setup |
@@ -93,6 +105,47 @@ rate-limited surface reads as a divergence between the two rather than only as
 odd handling.
 
 ---
+
+## Autoflight — the aircraft flies itself
+
+Press `4` and it takes off, climbs and cruises. Press `5` and it routes to the
+runway, flies the approach, flares, touches down and stops. Move the stick and
+it hands the aircraft straight back.
+
+```
+TAKEOFF -> CLIMB -> CRUISE -> TO_FAF -> APPROACH -> FLARE -> ROLLOUT -> DONE
+                                            └── GO_AROUND ──┘
+```
+
+Every phase works by moving the **targets** of the same cascade you get with
+keys 1/2/3. There is one set of control laws in this simulator, tuned and
+tested once. The alternative — a controller per phase — is what produced a
+7 m/s touchdown during development: a separate flare law meant a control
+handover at the exact moment the aircraft could least afford one.
+
+Guidance is derived from one runway: a threshold, a heading and an elevation.
+Everything else falls out — along-track distance, cross-track error, and the
+height the glidepath wants at this range.
+
+Flown from a standing start to a full stop, untouched:
+
+```
+AeroLiner-200   T/O -> CLB 32s -> CRZ 246s -> NAV -> APP 861s -> FLARE 1053s -> stopped 1100s
+                touchdown 0.93 m/s (183 fpm), 0.0 m off the centreline
+AeroFalcon-X    T/O -> CLB 22s -> CRZ 126s -> NAV -> APP 666s -> FLARE 923s -> stopped 956s
+                touchdown 0.88 m/s (173 fpm), 0.0 m off the centreline
+```
+
+It will also recover a bad situation. Dropped over the threshold at 10 000 ft
+pointing 90° across the runway, it flies away, lines up and lands on the
+centreline. Displaced 300 m sideways at 60 ft, it goes around rather than
+banking onto the runway from the side — the bank limit closes down to 4° near
+the ground, because the alternative is a wingtip in the tarmac.
+
+The flare profile, configuration schedule and capture criteria are per-aircraft
+data in `autopilot.yaml`, not code. What this is *not* is in
+[`docs/known_limitations.md`](docs/known_limitations.md) §9: there is no ILS,
+no navigation database, no decrab, and it is emphatically not a Cat III model.
 
 ## Telemetry and replay
 
@@ -235,7 +288,8 @@ aerosim/
 │   └── fdm.py              force assembly and integration
 ├── control/
 │   ├── actuators.py        rate/position limits, jam, runaway, reduced authority
-│   └── autopilot.py        mode state machine, cascaded control laws
+│   ├── autopilot.py        mode state machine, cascaded control laws
+│   └── autoflight.py       phase machine: take-off, climb, autoland, go-around
 ├── telemetry/
 │   ├── recorder.py         buffered CSV, run manifest, integrity hash
 │   └── replay.py           reads telemetry and feeds nothing back
@@ -319,6 +373,7 @@ python -m pytest tests/test_aerosim_foundation.py -q   # units, frames, clock, a
 python -m pytest tests/test_aerosim_dynamics.py -q     # tables, aero, mass, engines, trim
 python -m pytest tests/test_aerosim_game.py -q         # orchestrator, autopilot, renderer
 python -m pytest tests/test_aerosim_telemetry.py -q    # recording, integrity, replay
+python -m pytest tests/test_aerosim_autoflight.py -q   # auto take-off, autoland
 ```
 
 Tests fall into three deliberately distinct categories:

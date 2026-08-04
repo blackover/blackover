@@ -1,6 +1,6 @@
 > This repository holds two independent projects:
 > **[AeroSim Lab](aerosim/README.md)** — a flight simulator you fly like a game
-> (`python -m aerosim`), and the XRP signal app documented below.
+> (`python play.py`), and the XRP signal app documented below.
 
 ---
 

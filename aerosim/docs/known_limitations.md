@@ -251,7 +251,41 @@ noise, bias, drift and latency are *not* represented in this build.
 
 ---
 
-## 9. Telemetry and replay
+## 9. Autoflight and autoland
+
+**What it is.** A phase state machine that moves the *targets* of the ordinary
+autopilot — altitude, heading, vertical speed, airspeed. It is not a second
+set of control laws, and it has no authority the pilot does not also have.
+
+**Simplification.** Guidance geometry is a single runway: a threshold point, a
+heading and an elevation. There is no navigation database, no published
+procedure, no missed-approach track, and no ILS — the "localizer" and
+"glidepath" are computed directly from that geometry, with perfect knowledge
+of the aircraft's position. A real autoland flies a received signal, with beam
+noise and bends, and its accuracy degrades with distance from the transmitter.
+
+**Consequence.** Tracking is better than a real system's, and none of the
+failure modes that make real autoland systems interesting are represented:
+no beam interference, no signal loss, no receiver failure, no decision height
+logic beyond a single lined-up-or-go-around check, and no redundancy or
+disagreement between channels. **This is not a Category III autoland model and
+must not be read as one.**
+
+**Not modelled.** Crosswind decrab or sideslip on touchdown — the aircraft
+tracks the centreline by heading, so in a crosswind it lands slightly crabbed.
+There is no autobrake logic; the rollout applies full braking.
+
+**Take-off.** Rotation is flown open-loop by ramping the stick, because the
+autopilot has no ground mode. There is no V1, no rejected take-off, no
+balanced field calculation, and no engine-failure-after-V1 case.
+
+**Tuning.** The flare profile, configuration schedule and capture criteria are
+per-aircraft data in `autopilot.yaml`, not code. They were tuned by flying
+them, not derived, so they are reasonable rather than optimal.
+
+---
+
+## 10. Telemetry and replay
 
 **Simplification.** Telemetry is sampled at a fixed rate (50 Hz by default)
 from a kernel running at 100 Hz, so a recording is a *decimated* view of the
@@ -275,14 +309,14 @@ what the package checksum, the confidence ratings and the test suite are for.
 
 ---
 
-## 10. Not modelled at all
+## 11. Not modelled at all
 
 For the avoidance of doubt, none of the following exist:
 
 - Icing, precipitation, or any contamination effect on aerodynamics
 - Terrain other than a single flat plane with one runway
 - Any navigation aid, radio, or air traffic environment
-- Autoland, autobrake, or thrust reversers
+- Thrust reversers (the rollout uses wheel brakes and speedbrake only)
 - Rotorcraft, propeller aircraft, or any non-fixed-wing configuration
 - Cabin pressurisation, environmental control, or oxygen systems
 - Certification-grade correlation with any real aircraft type
@@ -292,7 +326,7 @@ For the avoidance of doubt, none of the following exist:
 
 ---
 
-## 11. Verification status
+## 12. Verification status
 
 Modelling limitations and *verification* limitations are different things.
 Every layer in this build has passing tests — see `README.md` for the count —

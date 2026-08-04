@@ -12,6 +12,24 @@ max_vertical_speed: "2500 fpm"
 # cascade, not the airframe: a stepped inner target saturates the pitch loop.
 pitch_command_rate: "3.0 deg/s"
 
+# Autoland. The flare bleeds the descent along
+#   vs = -(base + entry * (agl/height) ** exponent)
+# so the pull is spread over the whole flare. Arresting the descent in a
+# short one also works, and costs 2.9 g on a 2.0 g flaps placard.
+autoland:
+  vref_factor: 1.30
+  flare_height: "40 m"
+  flare_exponent: 1.30
+  flare_base_rate: "0.35 m/s"
+  flare_entry_rate: "3.20 m/s"
+  retard_height: "6 m"
+  gear_range: "9000 m"
+  flap_half_range: "14000 m"
+  flap_full_range: "8000 m"
+  faf_range: "13000 m"
+  capture_cross: "2500 m"
+  max_bank: "20 deg"
+
 gains:
   # altitude error (m) -> vertical speed command (m/s), capped at
   # max_vertical_speed

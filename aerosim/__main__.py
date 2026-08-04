@@ -6,9 +6,9 @@ import argparse
 import sys
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(prog: str = "python -m aerosim") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m aerosim",
+        prog=prog,
         description=(
             "AeroSim Lab -- a flight simulator with a pre-flight setup screen, "
             "a chase view and a full instrument panel."
@@ -30,8 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+def main(argv: list[str] | None = None, prog: str = "python -m aerosim") -> int:
+    args = build_parser(prog).parse_args(argv)
 
     # Imported purely to check availability and give a useful message rather
     # than a traceback from three modules deep.
