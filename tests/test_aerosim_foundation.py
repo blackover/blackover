@@ -38,6 +38,13 @@ from aerosim.core.units import (
 )
 from aerosim.env.atmosphere import Atmosphere, geometric_to_geopotential
 from aerosim.env.terrain import PROFILES, Terrain, flat_terrain
+from aerosim.env.weather import (
+    PRECIPITATION_FLOOR,
+    RUNWAY_STATES,
+    Weather,
+    default_runway_state,
+    recovery_temperature,
+)
 
 
 # --------------------------------------------------------------------------
@@ -381,3 +388,113 @@ class TestTerrain:
         peak = terrain.highest_within(40000.0, 40000.0, 5000.0, samples=11)
         assert peak >= terrain.height_at(40000.0, 40000.0)
         assert peak >= terrain.height_at(43000.0, 42000.0)
+
+
+# --------------------------------------------------------------------------
+# Weather
+# --------------------------------------------------------------------------
+
+
+class TestWeather:
+    def test_recovery_temperature_is_the_stagnation_rise(self):
+        # The number that decides whether an airframe ices is not the outside
+        # air temperature: it is what the leading edge feels after bringing
+        # the flow to rest.
+        assert recovery_temperature(288.15, 0.0) == pytest.approx(288.15)
+        for mach in (0.2, 0.5, 0.8, 1.5):
+            expected = 288.15 * (1.0 + 0.89 * 0.2 * mach * mach)
+            assert recovery_temperature(288.15, mach) == pytest.approx(expected)
+        # Monotone, and a real rise by the time it matters.
+        assert recovery_temperature(263.15, 0.8) - 263.15 > 25.0
+
+    def test_a_solid_deck_is_flown_into_and_a_broken_one_is_not(self):
+        broken = Weather(cloud_cover=0.5, cloud_base=1000.0, cloud_thickness=800.0)
+        assert not broken.has_deck
+        assert not broken.in_cloud(1400.0)
+
+        overcast = Weather(cloud_cover=1.0, cloud_base=1000.0, cloud_thickness=800.0)
+        assert overcast.has_deck
+        assert not overcast.in_cloud(900.0)  # below
+        assert overcast.in_cloud(1400.0)  # inside
+        assert not overcast.in_cloud(2000.0)  # on top
+
+    def test_visibility_collapses_in_cloud_and_recovers_above_it(self):
+        weather = Weather(
+            cloud_cover=1.0, cloud_base=1000.0, cloud_thickness=800.0, visibility=40000.0
+        )
+        assert weather.visibility_at(500.0) == pytest.approx(40000.0)
+        assert weather.visibility_at(1400.0) < 100.0
+        assert weather.visibility_at(2500.0) == pytest.approx(40000.0)
+
+    def test_precipitation_reduces_visibility_but_not_below_the_floor(self):
+        clear = Weather(precipitation="none", visibility=40000.0)
+        rain = Weather(precipitation="rain", visibility=40000.0)
+        heavy = Weather(precipitation="heavy_snow", visibility=40000.0)
+        assert clear.visibility_at(0.0) > rain.visibility_at(0.0) > heavy.visibility_at(0.0)
+
+        # And a low reported visibility in heavy precipitation does not go to
+        # zero: the simulator has no Cat III equipment and the pre-flight check
+        # says so rather than the weather pretending.
+        worst = Weather(precipitation="heavy_snow", visibility=2000.0)
+        assert worst.visibility_at(0.0) >= PRECIPITATION_FLOOR
+
+    def test_icing_needs_moisture(self):
+        dry = Weather(cloud_cover=0.0, precipitation="none")
+        assert dry.icing_severity(altitude=1500.0, temperature=263.15, mach=0.2) == 0.0
+
+        wet = Weather(cloud_cover=1.0, cloud_base=1000.0, cloud_thickness=3000.0)
+        assert wet.icing_severity(altitude=1500.0, temperature=263.15, mach=0.2) > 0.0
+
+    def test_icing_window_is_bounded_at_both_ends(self):
+        weather = Weather(cloud_cover=1.0, cloud_base=0.0, cloud_thickness=8000.0)
+
+        def severity(celsius):
+            return weather.icing_severity(
+                altitude=2000.0, temperature=273.15 + celsius, mach=0.05
+            )
+
+        assert severity(+5.0) == 0.0  # too warm: liquid stays liquid
+        assert severity(-30.0) == 0.0  # too cold: already ice crystals
+        assert severity(-6.0) > 0.5  # the supercooled-water band
+        assert severity(-6.0) > severity(-16.0) > 0.0
+
+    def test_kinetic_heating_keeps_a_fast_aircraft_out_of_the_icing_band(self):
+        # The same cloud, the same air: a slow aircraft ices in it and a fast
+        # one does not, because the recovery temperature at the leading edge
+        # is above freezing. This falls out of the physics rather than being
+        # a special case for the fighter.
+        weather = Weather(cloud_cover=1.0, cloud_base=0.0, cloud_thickness=8000.0)
+        cold = 273.15 - 8.0
+        slow = weather.icing_severity(altitude=2000.0, temperature=cold, mach=0.15)
+        fast = weather.icing_severity(altitude=2000.0, temperature=cold, mach=0.85)
+        assert slow > 0.9
+        assert fast == 0.0
+
+    def test_ice_accretes_with_airspeed_and_sheds_with_anti_ice(self):
+        fast = Weather.ice_rate(1.0, 200.0, anti_ice=False)
+        slow = Weather.ice_rate(1.0, 60.0, anti_ice=False)
+        assert fast > slow > 0.0
+
+        # Anti-ice sheds whatever the conditions, because a boot or a hot
+        # leading edge removes ice that has already formed.
+        assert Weather.ice_rate(1.0, 200.0, anti_ice=True) < 0.0
+        assert Weather.ice_rate(0.0, 200.0, anti_ice=False) < 0.0
+
+    def test_runway_states_rank_by_braking(self):
+        order = ["dry", "damp", "wet", "standing_water", "snow", "ice"]
+        braking = [RUNWAY_STATES[name].braking for name in order]
+        assert braking == sorted(braking, reverse=True)
+        assert RUNWAY_STATES["dry"].braking == 1.0
+        for state in RUNWAY_STATES.values():
+            assert 0.0 < state.braking <= 1.0
+            assert 0.0 < state.cornering <= 1.0
+            assert state.rolling >= 1.0
+
+    def test_default_runway_state_follows_the_weather(self):
+        warm, freezing = 288.15, 265.0
+        assert default_runway_state("none", warm) == "dry"
+        assert default_runway_state("rain", warm) == "wet"
+        assert default_runway_state("heavy_rain", warm) == "standing_water"
+        assert default_runway_state("rain", freezing) == "ice"
+        assert default_runway_state("snow", warm) == "snow"
+        assert default_runway_state("none", freezing) == "ice"

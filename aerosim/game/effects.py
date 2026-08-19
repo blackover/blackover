@@ -111,7 +111,6 @@ class Effects:
 
         self.contrails = [Trail() for _ in self.nozzles]
         self.vortices = [Trail() for _ in self.wingtips]
-        self._layer: pygame.Surface | None = None
         self._previous: np.ndarray | None = None
 
     # -- update ------------------------------------------------------------
@@ -169,15 +168,9 @@ class Effects:
 
     # -- drawing -----------------------------------------------------------
 
-    def _alpha_layer(self, renderer) -> pygame.Surface:
-        """One reusable translucent layer. Allocating per frame is not free."""
-        layer = self._layer
-        if layer is None or layer.get_size() != renderer.viewport.size:
-            layer = pygame.Surface(renderer.viewport.size, pygame.SRCALPHA)
-            self._layer = layer
-        else:
-            layer.fill((0, 0, 0, 0))
-        return layer
+    @staticmethod
+    def _alpha_layer(renderer, name: str = "effects") -> pygame.Surface:
+        return renderer.alpha_layer(name)
 
     def draw_trails(self, renderer) -> None:
         """Contrails and vortices, as ribbons that thicken and fade with age."""
@@ -281,7 +274,7 @@ class Effects:
                 if reheat_only and reheat < 0.5:
                     continue
                 if layer is None:
-                    layer = self._alpha_layer(renderer)
+                    layer = self._alpha_layer(renderer, "exhaust")
                 self._draw_cone(
                     layer,
                     renderer,
@@ -338,3 +331,99 @@ class Effects:
                     apex,
                 ],
             )
+
+
+class PrecipitationField:
+    """Rain or snow, as screen-space particles moving with the aircraft.
+
+    Screen space rather than world space on purpose. A world-space particle
+    field dense enough to look like rain at the windscreen needs millions of
+    drops out to the visibility, and all but a handful of them project to less
+    than a pixel. What a pilot sees is the near field, and the near field is
+    a band a few tens of metres across that travels with the aeroplane.
+
+    The motion is derived from the step index, not a wall clock, so a replay
+    of a run produces the same picture the run did.
+    """
+
+    __slots__ = ("_seeded", "_size", "_field", "_seed")
+
+    COUNT = 520
+
+    def __init__(self, seed: int = 1) -> None:
+        self._seed = seed
+        self._size: tuple[int, int] = (0, 0)
+        self._field: np.ndarray | None = None
+        self._seeded = False
+
+    def _particles(self, size: tuple[int, int]) -> np.ndarray:
+        """Positions and depths, laid out once per viewport size."""
+        if self._field is not None and self._size == size:
+            return self._field
+        rng = np.random.default_rng(self._seed + 4111)
+        width, height = size
+        self._field = np.stack(
+            [
+                rng.uniform(-0.2 * width, 1.2 * width, self.COUNT),
+                rng.uniform(-0.2 * height, 1.2 * height, self.COUNT),
+                # Depth, 0 near to 1 far: near drops are longer and faster,
+                # which is the only cue that gives the field any depth at all.
+                rng.uniform(0.0, 1.0, self.COUNT),
+            ],
+            axis=1,
+        )
+        self._size = size
+        return self._field
+
+    def draw(self, renderer, state, weather, sim) -> None:
+        spec = weather.precipitation
+        if spec.intensity <= 0.0:
+            return
+
+        viewport = renderer.viewport
+        field = self._particles(viewport.size)
+        width, height = viewport.size
+
+        # Frozen precipitation falls slowly and tumbles; liquid falls fast and
+        # is streaked backwards by the aircraft's own speed.
+        speed = state.derived.vtas
+        if spec.frozen:
+            fall = 0.9 * height
+            slant = -0.35 * min(1.0, speed / 90.0) * height
+            length, colour, alpha = 3.0, (238, 242, 250), 190
+        else:
+            fall = 3.2 * height
+            slant = -1.9 * min(1.0, speed / 90.0) * height
+            length, colour, alpha = 26.0, (198, 212, 232), 150
+
+        time = sim.clock.time
+        shown = int(self.COUNT * spec.intensity)
+        if shown <= 0:
+            return
+
+        near = 0.35 + 0.65 * (1.0 - field[:shown, 2])
+        x = field[:shown, 0] + slant * near * time
+        y = field[:shown, 1] + fall * near * time
+        # Wrap through a band larger than the viewport, so nothing pops in at
+        # an edge the eye is looking at.
+        x = np.mod(x + 0.2 * width, 1.4 * width) - 0.2 * width
+        y = np.mod(y + 0.2 * height, 1.4 * height) - 0.2 * height
+
+        layer = renderer.alpha_layer("precipitation")
+        left, top = viewport.left, viewport.top
+        dx = slant / max(abs(fall), 1.0) * length
+        for i in range(shown):
+            sx, sy, scale = float(x[i]), float(y[i]), float(near[i])
+            if spec.frozen:
+                pygame.draw.circle(
+                    layer, (*colour, alpha), (int(sx), int(sy)), max(1, int(2.0 * scale))
+                )
+            else:
+                pygame.draw.line(
+                    layer,
+                    (*colour, alpha),
+                    (sx, sy),
+                    (sx + dx * scale, sy + length * scale),
+                    1 if scale < 0.7 else 2,
+                )
+        renderer.surface.blit(layer, (left, top))

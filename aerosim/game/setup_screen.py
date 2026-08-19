@@ -28,6 +28,7 @@ from ..core.units import (
     to_kt,
 )
 from ..env.terrain import PROFILES as TERRAIN_PROFILES
+from ..env.weather import PRECIPITATION, RUNWAY_STATES
 from ..env.wind import TURBULENCE_PRESETS
 from .config import (
     DATA_ROOT,
@@ -103,6 +104,12 @@ def build_settings() -> list[tuple[str, list[Setting]]]:
     # Ordered by how much relief they have, not by dict order, so the arrow
     # keys walk from flat to mountainous rather than around a hash table.
     terrain_profiles = ["flat", "gentle", "rolling", "hilly", "mountainous"]
+    # Ordered by how much they obscure and how slippery they leave the ground,
+    # so the arrow keys walk a scale rather than a hash table.
+    precipitation_types = ["none", "drizzle", "rain", "heavy_rain", "snow", "heavy_snow"]
+    runway_states = ["dry", "damp", "wet", "standing_water", "snow", "ice"]
+    assert set(precipitation_types) == set(PRECIPITATION)
+    assert set(runway_states) == set(RUNWAY_STATES)
     assert set(terrain_profiles) == set(TERRAIN_PROFILES)
 
     def airborne(c: SimConditions) -> bool:
@@ -245,10 +252,62 @@ def build_settings() -> list[tuple[str, list[Setting]]]:
                 ),
                 Setting(
                     "Visibility",
-                    lambda c: f"{c.visibility / 1000.0:.0f} km",
+                    lambda c: f"{c.visibility / 1000.0:.0f} km  in clear air",
                     lambda c, d, f: setattr(
                         c, "visibility", _clamp(c.visibility + d * (10000 if f else 2000), 2000.0, 80000.0)
                     ),
+                ),
+                Setting(
+                    "Cloud cover",
+                    lambda c: (
+                        "clear" if c.cloud_cover < 0.06
+                        else f"{c.cloud_cover * 8:.0f}/8"
+                        + ("  overcast, solid deck" if c.cloud_cover >= 0.75 else "  broken")
+                    ),
+                    lambda c, d, f: setattr(
+                        c, "cloud_cover", _clamp(c.cloud_cover + d * (0.25 if f else 0.125), 0.0, 1.0)
+                    ),
+                    note="an overcast is flown into; anything less is flown past",
+                ),
+                Setting(
+                    "Cloud base",
+                    lambda c: f"{to_ft(c.cloud_base):,.0f} ft",
+                    lambda c, d, f: setattr(
+                        c, "cloud_base", _clamp(c.cloud_base + d * ft(2000 if f else 200), ft(200), ft(25000))
+                    ),
+                    enabled=lambda c: c.cloud_cover >= 0.06,
+                ),
+                Setting(
+                    "Cloud tops",
+                    lambda c: f"{to_ft(c.cloud_base + c.cloud_thickness):,.0f} ft"
+                    f"   ({to_ft(c.cloud_thickness):,.0f} ft thick)",
+                    lambda c, d, f: setattr(
+                        c,
+                        "cloud_thickness",
+                        _clamp(c.cloud_thickness + d * ft(2000 if f else 500), ft(200), ft(30000)),
+                    ),
+                    enabled=lambda c: c.cloud_cover >= 0.06,
+                ),
+                Setting(
+                    "Precipitation",
+                    lambda c: PRECIPITATION[c.precipitation].label
+                    + (
+                        ""
+                        if c.precipitation == "none"
+                        else f"   visibility x{PRECIPITATION[c.precipitation].visibility_factor:.2f}"
+                    ),
+                    lambda c, d, f: setattr(
+                        c, "precipitation", _cycle(precipitation_types, c.precipitation, d)
+                    ),
+                ),
+                Setting(
+                    "Runway surface",
+                    lambda c: f"{RUNWAY_STATES[c.runway_state].label}"
+                    f"   braking {RUNWAY_STATES[c.runway_state].braking * 100:.0f} % of dry",
+                    lambda c, d, f: setattr(
+                        c, "runway_state", _cycle(runway_states, c.runway_state, d)
+                    ),
+                    note="changes the take-off roll and the landing roll",
                 ),
             ],
         ),
@@ -304,6 +363,7 @@ class SetupScreen:
         self.sections = build_settings()
         self.rows = [s for _, group in self.sections for s in group]
         self.index = 0
+        self._scroll = 0
         self.fonts = Fonts(1.0)
         self._model_cache: dict[str, object] = {}
         self._error: str | None = None
@@ -411,13 +471,61 @@ class SetupScreen:
         )
         draw_text(surface, self.fonts.small, keys, (34, height - 36), DIM)
 
+    LINE_HEIGHT = 25
+    GROUP_HEADER = 26
+    GROUP_GAP = 8
+
+    def _content_height(self) -> int:
+        """How tall the settings list wants to be, in pixels."""
+        total = 0
+        for _, group in self.sections:
+            total += self.GROUP_HEADER + self.LINE_HEIGHT * len(group) + self.GROUP_GAP
+        return total
+
+    def _scroll_offset(self, rect: pygame.Rect) -> int:
+        """How far the list is scrolled, to keep the selected row on screen.
+
+        The list grows every time a setting is added, and it long ago passed
+        the point where it fits a small window. Scrolling rather than shrinking
+        the rows or splitting into columns, because it degrades gracefully:
+        one more setting is always one more row, whatever the window is.
+        """
+        overflow = self._content_height() - rect.height
+        if overflow <= 0:
+            return 0
+
+        # Where the selected row sits in the un-scrolled list.
+        top, row_index = 0, 0
+        selected_top = 0
+        for _, group in self.sections:
+            top += self.GROUP_HEADER
+            for _ in group:
+                if row_index == self.index:
+                    selected_top = top
+                top += self.LINE_HEIGHT
+                row_index += 1
+            top += self.GROUP_GAP
+
+        margin = 3 * self.LINE_HEIGHT
+        offset = self._scroll
+        offset = min(offset, max(0, selected_top - margin))
+        offset = max(offset, selected_top + self.LINE_HEIGHT + margin - rect.height)
+        self._scroll = max(0, min(overflow, offset))
+        return self._scroll
+
     def _draw_settings(self, rect: pygame.Rect) -> None:
         surface = self.surface
         self._row_rects: list[tuple[int, pygame.Rect]] = []
 
-        y = rect.y
+        # Clipped and scrolled: without the clip the overflowing rows draw
+        # straight through the key legend at the bottom of the screen.
+        previous_clip = surface.get_clip()
+        surface.set_clip(rect)
+
+        offset = self._scroll_offset(rect)
+        y = rect.y - offset
         row_index = 0
-        line_height = 25
+        line_height = self.LINE_HEIGHT
 
         for title, group in self.sections:
             draw_text(surface, self.fonts.small, title, (rect.x + 4, y), HEADER)
@@ -461,7 +569,28 @@ class SetupScreen:
 
                 y += line_height
                 row_index += 1
-            y += 8
+            y += self.GROUP_GAP
+
+        surface.set_clip(previous_clip)
+        self._draw_scroll_hint(rect, offset)
+
+    def _draw_scroll_hint(self, rect: pygame.Rect, offset: int) -> None:
+        """A thin bar showing how much of the list is off screen."""
+        content = self._content_height()
+        if content <= rect.height:
+            return
+        track = pygame.Rect(rect.right - 3, rect.y, 3, rect.height)
+        pygame.draw.rect(self.surface, (34, 38, 46), track, border_radius=2)
+        fraction = rect.height / content
+        thumb_height = max(24, int(rect.height * fraction))
+        travel = rect.height - thumb_height
+        top = rect.y + int(travel * offset / max(1, content - rect.height))
+        pygame.draw.rect(
+            self.surface,
+            PANEL_EDGE,
+            pygame.Rect(track.x, top, track.width, thumb_height),
+            border_radius=2,
+        )
 
     def _draw_briefing(self, rect: pygame.Rect) -> None:
         surface = self.surface

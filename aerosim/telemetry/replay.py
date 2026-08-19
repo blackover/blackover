@@ -28,6 +28,7 @@ from ..control.autopilot import Autopilot
 from ..core.state import State
 from ..env.atmosphere import Atmosphere
 from ..env.terrain import Terrain
+from ..env.weather import Weather
 from ..env.wind import WindField
 from ..fdm.aero import AeroModel
 from ..fdm.fdm import Diagnostics
@@ -175,6 +176,17 @@ class ReplaySession:
         self.terrain = Terrain(
             seed=self.conditions.seed,
             profile=self.conditions.terrain,
+            field_elevation=self.conditions.field_elevation,
+        )
+        # Same argument as the terrain: rebuilt from the manifest rather than
+        # stored, so a replay is flown through the weather the run was.
+        self.weather = Weather(
+            precipitation=self.conditions.precipitation,
+            cloud_cover=self.conditions.cloud_cover,
+            cloud_base=self.conditions.cloud_base,
+            cloud_thickness=self.conditions.cloud_thickness,
+            runway_state=self.conditions.runway_state,
+            visibility=self.conditions.visibility,
             field_elevation=self.conditions.field_elevation,
         )
 

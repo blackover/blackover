@@ -53,6 +53,9 @@ really produces, not a placard figure.
 | **Terrain** | flat, gentle, rolling, hilly or mountainous |
 | **Loading** | fuel and payload as a fraction of capacity |
 | **Weather** | wind speed and direction, shear, turbulence, ISA offset, QNH, time of day, visibility |
+| **Cloud** | cover, base and tops — an overcast is flown *into*, not past |
+| **Precipitation** | drizzle, rain, heavy rain, snow, heavy snow |
+| **Runway** | dry, damp, wet, standing water, compacted snow, ice |
 | **Failures** | engine, hydraulic, elevator jam or fuel leak, and when it fires |
 | **Simulation** | flight assist, step size, random seed |
 
@@ -81,6 +84,7 @@ Chase view above, full instrument panel below.
 | `G` | landing gear |
 | `F` `V` | flaps extend and retract |
 | `B` | wheel brakes |
+| `I` | anti-ice on and off — sheds airframe ice |
 | `SPACE` | speedbrake |
 | `1` `2` `3` | autopilot: altitude hold, heading hold, speed hold |
 | `4` | **AUTO FLY** — takes off, climbs and cruises by itself |
@@ -106,6 +110,38 @@ tapes with stall and VMO bands, vertical speed, engine N1 and EGT, fuel, mass,
 CG, and both commanded *and* actual control positions — so a jammed or
 rate-limited surface reads as a divergence between the two rather than only as
 odd handling.
+
+### Weather that does something
+
+Wind and turbulence were always there. What is new is the weather that acts
+on the airframe rather than on the air:
+
+- **Cloud is a place, not a texture.** Set the cover to 6/8 or more and it
+  becomes a solid deck with a base and tops. Fly into it and the visibility
+  collapses to forty metres, the sky and the ground disappear, and the panel
+  is all you have. Below it the sky goes grey; above it, blue again.
+- **Icing is gated on the *recovery* temperature.** Ice needs visible
+  moisture and a leading edge between 0 and −20 °C — and the leading edge is
+  not at the outside air temperature, it is at the stagnation temperature.
+  A transport at 200 kt in a −8 °C cloud ices; the fighter through the same
+  cloud at Mach 0.85 does not, because kinetic heating has put its leading
+  edge 22 °C above the air around it. That falls out of the physics rather
+  than being a special case, and it is why the ram rise appears in the
+  report at all. Ice costs 30 % of CLmax, 35 % of the stall angle, and adds
+  drag and weight forward of the CG. `I` sheds it.
+- **A contaminated runway is a different runway.** Braking, cornering and
+  rolling resistance all scale with the surface. Measured, from 130 kt:
+
+  | Surface | Stopping distance | vs dry |
+  |---|---|---|
+  | dry | 692 m | 1.00× |
+  | wet | 1 025 m | 1.48× |
+  | standing water | 1 306 m | 1.89× |
+  | compacted snow | 1 446 m | 2.09× |
+  | ice | 2 867 m | 4.15× |
+
+  Those ratios are the simulator's own output, and they land where published
+  contaminated-runway factors do.
 
 ### The view
 
@@ -305,9 +341,13 @@ aerosim/
 │   ├── clock.py            fixed-step clock, render-rate decoupling
 │   ├── model_package.py    package loading, schema validation, checksum
 │   └── orchestrator.py     subsystem lifecycle and execution order
+├── analysis/
+│   ├── design.py           design report card, graded against target bands
+│   └── modes.py            linearised short period, phugoid, dutch roll, ...
 ├── env/
 │   ├── atmosphere.py       ISA 1976 to 47 km, offsets, CAS/EAS conversions
 │   ├── terrain.py          procedural heightfield -- drawn AND flown
+│   ├── weather.py          cloud, precipitation, icing, surface condition
 │   └── wind.py             layered wind, seeded turbulence
 ├── fdm/
 │   ├── tables.py           1-D and 2-D interpolation with range policy
@@ -401,6 +441,58 @@ model that still flies.
 
 ---
 
+## Designing your own aircraft
+
+Every aircraft is a folder of YAML in `data/aircraft/`. Drop a third one in and
+it appears on the pre-flight screen, gets a mesh built from its own geometry,
+and flies through the same force model as the other two.
+
+To find out whether it is any *good*:
+
+```bash
+python -m aerosim --design aeroliner_200
+python -m aerosim --design my_aircraft --design-altitude 8000
+```
+
+The report needs no display. It reads the package, grades about two dozen
+figures against target bands, linearises the **real force model** about trim
+to get the five classical modes, and then says in plain language what to
+change and what the change will cost:
+
+```
+  Natural modes (linearised about trim)
+  -------------------------------------
+     ok  short period damping           +0.404   target +0.300 - +2.000   period 4.4 s
+    LOW  phugoid damping                +0.039   target +0.040 - +1.000   period 87.1 s
+    LOW  dutch roll damping             +0.046   target +0.080 - +1.000   period 5.3 s
+     ok  roll time constant               0.78 s target < 1.40
+     ok  spiral doubling time              999 s target > 20              convergent
+
+  Notes
+  -----
+   * Dutch-roll damping is 0.05. It will wallow in turbulence. Raise cn_r
+     (fin area or tail arm) or reduce cl_beta (less dihedral or less sweep)
+     -- too much dihedral effect relative to weathercock stability is the
+     usual cause.
+```
+
+The modes come from finite-differencing the same force build-up the simulator
+flies, not from a separate stability matrix — so the flap increments, the
+ground effect and the Prandtl-Glauert factor are in the eigenvalues too, and
+what is analysed is what is flown. A test asserts the linearisation against an
+independent perturbation of the nonlinear model.
+
+A verdict of `LOW` or `HIGH` is not a failure: it means the design is unusual
+in that respect and the reason should be deliberate. The fighter fails the
+transport's wing-loading band, and it fails it in the direction that makes it
+a fighter.
+
+The full guide — what every number trades against, which coefficient moves
+which mode, and the order to decide things in — is
+[`docs/aircraft_design.md`](docs/aircraft_design.md).
+
+---
+
 ## Verification
 
 ```bash
@@ -409,6 +501,7 @@ python -m pytest tests/test_aerosim_dynamics.py -q     # tables, aero, mass, eng
 python -m pytest tests/test_aerosim_game.py -q         # orchestrator, autopilot, renderer
 python -m pytest tests/test_aerosim_telemetry.py -q    # recording, integrity, replay
 python -m pytest tests/test_aerosim_autoflight.py -q   # auto take-off, autoland
+python -m pytest tests/test_aerosim_analysis.py -q     # linearised modes, design report
 ```
 
 Tests fall into three deliberately distinct categories:
@@ -431,7 +524,7 @@ harder to diagnose later than a failed assertion now.
 
 ### Defects the suite and the build found
 
-Thirteen, all in code that appeared to work:
+Fifteen, all in code that appeared to work:
 
 1. **Trim solved a different model from the one being flown.** The trim solver
    assembled thrust forces itself and omitted the engine-position moment the
@@ -504,6 +597,19 @@ Thirteen, all in code that appeared to work:
     90 — at exactly the altitudes where the horizon is furthest away. It drew
     a plausible picture the whole time, which is why it took a printed table
     of cell size against altitude to find it.
+14. **An aircraft that rotated through its own nose gear.** A strut past full
+    travel is on its stop, and a stop is not a spring that has stopped
+    pushing harder — the normal force saturated at full compression. Braking
+    hard enough to bottom the nose gear therefore let the fighter keep
+    rotating: 79° nose down on a flat, dry runway, ending in a "terrain
+    impact" that was its own nose hitting the ground it was already standing
+    on. Found by a contaminated-runway test that happened to brake harder
+    than anything had before.
+15. **A setup screen that had outgrown its window.** One un-scrolled column,
+    laid out when there were fewer settings, drawing the last group straight
+    through the key legend at the bottom of the screen. Every setting added
+    since made it worse and none of them made it visible, because the row
+    being edited was usually near the top.
 
 ---
 

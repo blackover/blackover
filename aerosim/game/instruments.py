@@ -540,3 +540,17 @@ class Panel:
             (box.x, cfg_y + 45),
             WHITE,
         )
+
+        # Airframe ice. Shown only once there is any, because a permanent
+        # "ICE 0%" trains the eye to stop reading the line it appears on.
+        ice = getattr(sim.fdm.aero, "ice", 0.0)
+        anti_ice = getattr(getattr(sim, "pilot", None), "anti_ice", False)
+        if ice > 0.02 or anti_ice:
+            colour = DIM if ice <= 0.02 else (RED if ice > 0.5 else AMBER)
+            draw_text(
+                surface,
+                self.fonts.tiny,
+                f"ICE  {ice * 100:.0f}%" + ("  A/I" if anti_ice else ""),
+                (box.x, cfg_y + 60),
+                colour,
+            )

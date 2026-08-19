@@ -26,6 +26,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..core.frames import body_from_wind
+from ..env.weather import ICE_ALPHA_LOSS, ICE_CD0, ICE_CL_LOSS
 from .tables import Table1D
 
 MACH_CLAMP = 0.92
@@ -162,6 +163,11 @@ class AeroModel:
         # configuration, not a control, so it is set once rather than commanded.
         self.extra_cd0 = 0.0
 
+        # Airframe icing, 0 clean to 1 fully contaminated. Owned by the
+        # orchestrator, which integrates it against the weather; the aero
+        # model only says what a given amount of it costs.
+        self.ice = 0.0
+
         # Flap effects, applied as increments proportional to flap fraction.
         self.flap_cl = g("aerodynamics", "flaps.delta_cl_max", 0.0)
         self.flap_cd = g("aerodynamics", "flaps.delta_cd_max", 0.0)
@@ -198,8 +204,15 @@ class AeroModel:
     # -- helpers -----------------------------------------------------------
 
     def stall_speed(self, mass: float, density: float, flap: float = 0.0, load_factor: float = 1.0) -> float:
-        """1-g stall speed in TAS for a given mass and air density."""
-        cl_max = self.cl_max + self.flap_cl * flap
+        """Stall speed in TAS for a given mass, air density and load factor.
+
+        Ice is included, because the number this returns is what the panel
+        draws as the red band and what the autoflight computes Vref from. A
+        stall speed that ignores the contamination on the wing is the one
+        number in the simulator it would be most dangerous to get wrong.
+        """
+        ice = max(0.0, min(1.0, self.ice))
+        cl_max = (self.cl_max + self.flap_cl * flap) * (1.0 - ICE_CL_LOSS * ice)
         weight = mass * 9.80665 * max(0.1, load_factor)
         denom = 0.5 * density * self.wing_area * cl_max
         return math.sqrt(weight / denom) if denom > 0.0 else 0.0
@@ -258,17 +271,24 @@ class AeroModel:
         ge_lift, ge_induced = self._ground_effect(height_agl)
 
         # -- lift ----------------------------------------------------------
+        # Ice thickens and roughens the section: it costs maximum lift and it
+        # moves the stall to a lower angle. Both matter, and the second is the
+        # one that kills, because the stall arrives while the attitude and the
+        # speed both still look normal.
+        ice = max(0.0, min(1.0, self.ice))
+        ice_lift = 1.0 - ICE_CL_LOSS * ice
+
         alpha_shift = self.flap_alpha_stall * flap
-        cl_base = self.cl_table.lookup(alpha - alpha_shift)
+        cl_base = self.cl_table.lookup(alpha - alpha_shift) * ice_lift
         cl = cl_base * pg * ge_lift
-        cl += self.flap_cl * flap
+        cl += self.flap_cl * flap * ice_lift
         cl += self.cl_q * q * chord_hat
         cl += self.cl_de * elevator
 
         # Stall detection compares against where the curve actually peaks,
         # not against a hard alpha threshold, so it stays right when a data
         # package supplies its own lift curve.
-        alpha_peak = self.alpha_stall + alpha_shift
+        alpha_peak = (self.alpha_stall + alpha_shift) * (1.0 - ICE_ALPHA_LOSS * ice)
         stalled = alpha > alpha_peak or alpha < -0.85 * alpha_peak
 
         # -- drag ----------------------------------------------------------
@@ -278,7 +298,7 @@ class AeroModel:
             * cl_induced * cl_induced
             / (math.pi * self.aspect_ratio * self.oswald)
         )
-        cd = self.cd0 + self.extra_cd0 + cd_induced
+        cd = self.cd0 + self.extra_cd0 + ICE_CD0 * ice + cd_induced
         cd += self.mach_drag.lookup(abs(mach))
         cd += self.flap_cd * flap
         cd += self.cd_speedbrake * speedbrake

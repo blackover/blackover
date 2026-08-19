@@ -13,6 +13,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from ..core.units import ft, kt, to_deg, to_ft, to_kt
+from ..env.weather import (
+    PRECIPITATION_FLOOR,
+    Weather,
+    default_runway_state,
+)
 
 DATA_ROOT = Path(__file__).resolve().parent.parent / "data" / "aircraft"
 
@@ -76,8 +81,17 @@ class SimConditions:
     turbulence: str = "none"
     temperature_offset: float = 0.0  # K from ISA
     qnh: float = 101325.0  # Pa
-    visibility: float = 45000.0  # m, affects the haze only
+    visibility: float = 45000.0  # m, in clear air away from cloud
     time_of_day: float = 12.0  # hours, drives the lighting
+
+    # Cloud and precipitation are physical, not scenery: the deck below is
+    # what the aircraft ices up inside, and what collapses the visibility to
+    # a few tens of metres when it is flown into.
+    cloud_cover: float = 0.35  # 0 clear .. 1 overcast
+    cloud_base: float = 1500.0  # m AMSL
+    cloud_thickness: float = 900.0  # m
+    precipitation: str = "none"
+    runway_state: str = "dry"
 
     # -- terrain ----------------------------------------------------------
     field_elevation: float = 0.0  # m
@@ -126,6 +140,9 @@ class SimConditions:
             ("Payload", f"{self.payload_fraction * 100:.0f} %"),
             ("Wind", wind),
             ("Turbulence", self.turbulence),
+            ("Cloud", f"{self.cloud_cover * 8:.0f}/8 at {to_ft(self.cloud_base):,.0f} ft"),
+            ("Precipitation", self.precipitation),
+            ("Runway", self.runway_state),
             ("Terrain", self.terrain),
             ("ISA offset", f"{self.temperature_offset:+.0f} C"),
             ("Failure", FAILURE_LABELS[self.failure]),
@@ -174,6 +191,46 @@ class SimConditions:
                 problems.append(
                     f"start altitude {to_ft(self.altitude):,.0f} ft is above the "
                     f"{to_ft(ceiling):,.0f} ft ceiling"
+                )
+
+            # The approach minimum this aircraft declares, against the cloud
+            # base actually set. Flying an approach to a ceiling below minimums
+            # is legitimate -- it is what a go-around is for -- so it warns.
+            weather = Weather(
+                precipitation=self.precipitation,
+                cloud_cover=self.cloud_cover,
+                cloud_base=self.cloud_base,
+                cloud_thickness=self.cloud_thickness,
+                runway_state=self.runway_state,
+                visibility=self.visibility,
+                field_elevation=self.field_elevation,
+            )
+            minimums = model.get("autopilot", "autoland.decision_height", ft(200.0))
+            if weather.has_deck and weather.ceiling() < minimums:
+                problems.append(
+                    f"cloud base {to_ft(weather.ceiling()):,.0f} ft is below the "
+                    f"{to_ft(minimums):,.0f} ft decision height -- expect a go-around"
+                )
+            landing = weather.visibility_at(self.field_elevation + 30.0)
+            if landing <= PRECIPITATION_FLOOR + 1.0 and self.precipitation != "none":
+                problems.append(
+                    f"{weather.precipitation.label} holds the visibility at "
+                    f"{landing:,.0f} m, which is a Cat III problem and this "
+                    "aircraft is not Cat III equipped"
+                )
+            if weather.runway.braking < 0.4:
+                problems.append(
+                    f"{weather.runway.label} runway: braking is "
+                    f"{weather.runway.braking * 100:.0f} % of dry, so the landing "
+                    "roll will be much longer than the placard figure"
+                )
+
+            surface = 288.15 + self.temperature_offset - 0.0065 * self.field_elevation
+            expected = default_runway_state(self.precipitation, surface)
+            if expected != self.runway_state:
+                problems.append(
+                    f"runway set {self.runway_state} but this weather would "
+                    f"normally leave it {expected}"
                 )
 
             max_crosswind = model.get("limitations", "max_crosswind", kt(35.0))

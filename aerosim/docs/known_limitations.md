@@ -363,12 +363,51 @@ model. This is tested.
 
 ---
 
-## 13. Not modelled at all
+## 13. Weather
+
+**Simplification.** Cloud is a single deck with a base, tops and a coverage
+fraction; six eighths or more makes it solid enough to fly into and anything
+less is flown past. Precipitation is one of six presets, each a visibility
+multiplier and a density for the visual field. Surface condition is one of six
+states, applied as multipliers on the gear model's own dry-runway
+coefficients.
+
+**Consequence.** There is no drop-size distribution, no liquid water content,
+no cloud type, no convective structure, no embedded turbulence tied to the
+cloud, no drainage or contaminant depth, and no hydroplaning. The precipitation
+field is *screen space*: it is the near field a windscreen sees, not a
+world-space volume, so it does not occlude anything and does not vary with
+where you look.
+
+**Icing.** Accretion is gated on visible moisture and a recovery temperature
+between 0 and −20 °C, peaking near −6 °C, with a rate proportional to airspeed
+and a fixed time constant. That is the right *shape*: the liquid-water window
+is real, the ram rise that keeps a fast aircraft out of it is real and is
+computed from the stagnation relation rather than special-cased, and the
+consequences — 30 % of CLmax, 35 % of the stall angle, added parasite drag and
+added mass forward of the CG — are the right ones in the right proportions.
+It is not a microphysics model: there is no accretion geometry, no distinction
+between rime and glaze, no runback, no tailplane stall and no propeller or
+intake icing. Anti-ice sheds at a fixed rate whatever the conditions and costs
+nothing, where a real system is a bleed-air or electrical load.
+
+**Runway state.** Braking-action multipliers, not measured friction
+coefficients. They reproduce published contaminated-runway distance factors to
+about ten per cent, which is enough to make the decision to land somewhere
+else a real one and not enough to compute a landing distance from.
+
+**Not acceptable for.** Icing certification work of any kind, contaminated
+runway performance calculation, or anything where a real meteorological
+quantity matters.
+
+---
+
+## 14. Not modelled at all
 
 For the avoidance of doubt, none of the following exist:
 
-- Icing, precipitation, or any contamination effect on aerodynamics
 - Buildings, vegetation, water, roads, or any scenery beyond the heightfield
+- Thunderstorms, windshear fronts, microbursts or wake turbulence
 - Any navigation aid, radio, or air traffic environment
 - Thrust reversers (the rollout uses wheel brakes and speedbrake only)
 - Rotorcraft, propeller aircraft, or any non-fixed-wing configuration
@@ -380,7 +419,27 @@ For the avoidance of doubt, none of the following exist:
 
 ---
 
-## 14. Verification status
+## 15. Design analysis
+
+**Simplification.** ``--design`` grades a package by interrogating the same
+models the simulator flies, and linearises the force build-up numerically
+about one trim point to obtain the five classical modes.
+
+**Consequence.** The modes describe *that* trim point, at *that* loading, at
+*that* altitude, with the gear and flaps where they were. A handling-qualities
+assessment sweeps the envelope and every CG; this samples one condition. The
+target bands are drawn from published Level 1 practice, and a band is a
+generalisation about a class of aircraft rather than a requirement on yours.
+
+**And it grades the aircraft you described, not the one you could build.**
+There is no structural model, so nothing checks that a wing of that area and
+that aspect ratio can carry that load at that mass. A package that scores well
+on every figure and weighs half what its geometry implies is a good design of
+an aircraft that does not exist.
+
+---
+
+## 16. Verification status
 
 Modelling limitations and *verification* limitations are different things.
 Every layer in this build has passing tests — see `README.md` for the count —

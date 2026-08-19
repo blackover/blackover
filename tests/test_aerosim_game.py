@@ -1170,3 +1170,269 @@ class TestTerrainDetail:
 
             cell = min(key[0] for key in renderer._ring_cache)
             assert cell * outer <= max(30_000.0, 2.0 * visibility) + 1.0
+
+
+# --------------------------------------------------------------------------
+# Weather acting on the flight model
+# --------------------------------------------------------------------------
+
+
+def _roll_to_a_stop(model, runway_state, speed=66.9):
+    """Brake from a given speed on a given surface; return the distance."""
+    sim = Simulation(
+        model,
+        SimConditions(
+            aircraft=model.name,
+            start_mode=StartMode.RUNWAY,
+            runway_state=runway_state,
+        ),
+    )
+    sim.fdm.state.x[3] = speed
+    start = float(sim.fdm.state.position[0])
+    sim.pilot.brake = 1.0
+    sim.pilot.speedbrake = 1.0
+    for _ in range(int(180.0 / sim.clock.dt)):
+        sim.throttle = 0.0
+        sim.step()
+        if sim.fdm.state.derived.ground_speed < 1.0 or sim.crashed:
+            break
+    return float(sim.fdm.state.position[0]) - start
+
+
+class TestRunwayCondition:
+    def test_stopping_distance_lengthens_with_contamination(self, model):
+        # The whole point of a surface state is that it changes the landing
+        # roll. If it does not, it is decoration.
+        distances = {
+            state: _roll_to_a_stop(model, state)
+            for state in ("dry", "wet", "snow", "ice")
+        }
+        ordered = [distances[s] for s in ("dry", "wet", "snow", "ice")]
+        assert ordered == sorted(ordered)
+        # And by a realistic amount: published contaminated-runway factors put
+        # wet near 1.5x dry and ice near 4x.
+        assert 1.25 < distances["wet"] / distances["dry"] < 1.9
+        assert distances["ice"] / distances["dry"] > 2.5
+
+    def test_the_aircraft_still_stops(self, model):
+        # On every surface, inside a length a runway could plausibly have.
+        for state in ("dry", "damp", "wet", "standing_water", "snow", "ice"):
+            assert _roll_to_a_stop(model, state) < 6000.0
+
+    def test_the_aircraft_does_not_rotate_through_its_own_nose_gear(self, model):
+        # A strut past full travel is on its stop, and a stop is not a spring
+        # that has stopped pushing harder. With the normal force saturating at
+        # full compression, braking hard enough to bottom the nose gear rotated
+        # the fighter straight through it -- 79 degrees nose down on a flat dry
+        # runway, ending in a "terrain impact" that was the nose hitting the
+        # ground it was already standing on.
+        sim = Simulation(
+            model,
+            SimConditions(aircraft=model.name, start_mode=StartMode.RUNWAY),
+        )
+        sim.fdm.state.x[3] = 66.9
+        sim.pilot.brake = 1.0
+        sim.pilot.speedbrake = 1.0
+        worst = 0.0
+        for _ in range(int(60.0 / sim.clock.dt)):
+            sim.throttle = 0.0
+            sim.step()
+            worst = min(worst, sim.fdm.state.derived.pitch)
+            if sim.fdm.state.derived.ground_speed < 1.0:
+                break
+
+        assert not sim.crashed, sim.crash_reason
+        # Nose down onto the bottomed strut is expected; through it is not.
+        assert worst > deg(-15.0), f"pitched to {math.degrees(worst):.0f} deg"
+        assert sim.fdm.state.derived.altitude > -0.5
+
+
+class TestIcing:
+    @staticmethod
+    def _icing_flight(model, *, anti_ice=False, seconds=300.0):
+        sim = Simulation(
+            model,
+            SimConditions(
+                aircraft=model.name,
+                start_mode=StartMode.AIRBORNE,
+                altitude=ft(9000),
+                airspeed=kt(200),
+                temperature_offset=-14.0,
+                cloud_cover=1.0,
+                cloud_base=ft(2000),
+                cloud_thickness=ft(14000),
+            ),
+        )
+        sim.pilot.anti_ice = anti_ice
+        for _ in range(int(seconds / sim.clock.dt)):
+            sim.throttle = 0.5
+            sim.step()
+        return sim
+
+    def test_ice_accretes_in_a_freezing_cloud(self, model):
+        sim = self._icing_flight(model)
+        assert sim.weather.in_cloud(sim.fdm.state.derived.altitude)
+        assert sim.fdm.aero.ice > 0.15
+
+    def test_anti_ice_keeps_the_airframe_clean(self, model):
+        assert self._icing_flight(model, anti_ice=True).fdm.aero.ice == 0.0
+
+    def test_no_ice_in_clear_air_however_cold(self, model):
+        sim = Simulation(
+            model,
+            SimConditions(
+                aircraft=model.name,
+                start_mode=StartMode.AIRBORNE,
+                altitude=ft(30000),
+                airspeed=kt(250),
+                temperature_offset=-20.0,
+                cloud_cover=0.0,
+            ),
+        )
+        run(sim, 120.0)
+        assert sim.fdm.aero.ice == 0.0
+
+    def test_ice_raises_the_stall_speed_the_panel_shows(self, model):
+        # The red band on the speed tape and the Vref the autoflight computes
+        # both come from stall_speed. If that ignores the ice, the one number
+        # it is most dangerous to get wrong is the one that is wrong.
+        aero = Simulation(model, SimConditions(aircraft=model.name)).fdm.aero
+        mass, density = 40_000.0, 1.225
+        clean = aero.stall_speed(mass, density)
+        aero.ice = 1.0
+        iced = aero.stall_speed(mass, density)
+        assert iced > clean * 1.15
+
+    def test_ice_costs_lift_drag_and_the_stall_angle(self, model):
+        sim = Simulation(
+            model,
+            SimConditions(
+                aircraft=model.name, start_mode=StartMode.AIRBORNE, altitude=ft(5000)
+            ),
+        )
+        aero = sim.fdm.aero
+        kwargs = dict(
+            vtas=120.0,
+            alpha=deg(8.0),
+            beta=0.0,
+            rates=np.zeros(3),
+            density=0.9,
+            mach=0.36,
+            elevator=0.0,
+            aileron=0.0,
+            rudder=0.0,
+        )
+        clean = aero.compute(**kwargs)
+        aero.ice = 1.0
+        iced = aero.compute(**kwargs)
+
+        # Less lift, more drag. Forces are body axes with z down, so lift is
+        # the negative z component.
+        assert -iced.force_body[2] < -clean.force_body[2]
+        assert -iced.force_body[0] > -clean.force_body[0]
+
+        # And the stall arrives sooner, which is the part that kills: the
+        # attitude and the speed both still look normal when it does.
+        near_stall = dict(kwargs, alpha=aero.alpha_stall * 0.80)
+        aero.ice = 0.0
+        assert not aero.compute(**near_stall).stalled
+        aero.ice = 1.0
+        assert aero.compute(**near_stall).stalled
+
+    def test_ice_adds_mass_forward_of_the_centre_of_gravity(self, model):
+        sim = Simulation(model, SimConditions(aircraft=model.name))
+        mass_model = sim.fdm.mass_model
+        clean = mass_model.compute()
+        mass_model.set_ice(0.01 * mass_model.empty_mass)
+        iced = mass_model.compute()
+        assert iced.mass > clean.mass
+        assert iced.ice_mass > 0.0
+        assert iced.cg[0] > clean.cg[0]  # x is forward
+
+
+class TestSetupScreenLayout:
+    @pytest.fixture(scope="class")
+    def screen(self):
+        import pygame
+
+        pygame.init()
+        surface = pygame.display.set_mode((1440, 900))
+        yield surface
+        pygame.quit()
+
+    @pytest.mark.parametrize("width,height", [(1024, 640), (1280, 720), (1440, 900)])
+    def test_every_setting_can_be_reached_and_stays_on_screen(
+        self, screen, width, height
+    ):
+        # The list grows every time a setting is added, and it passed the
+        # point where it fits a 900 px window somewhere around the cloud
+        # deck. Without scrolling the overflowing rows draw straight through
+        # the key legend at the bottom of the screen.
+        import pygame
+
+        from aerosim.game.setup_screen import SetupScreen
+
+        surface = pygame.Surface((width, height))
+        setup = SetupScreen(surface, SimConditions())
+        area = pygame.Rect(24, 96, int(width * 0.56) - 34, height - 150)
+
+        for index in range(len(setup.rows)):
+            setup.index = index
+            setup.draw()
+            offset = setup._scroll
+            assert 0 <= offset <= max(0, setup._content_height() - area.height)
+
+            # The selected row is inside the visible area, wherever it is.
+            selected = next(
+                rect for row, rect in setup._row_rects if row == setup.index
+            )
+            assert area.top - 1 <= selected.top
+            assert selected.bottom <= area.bottom + 1
+
+    def test_a_tall_window_needs_no_scrolling(self, screen):
+        import pygame
+
+        from aerosim.game.setup_screen import SetupScreen
+
+        surface = pygame.Surface((1440, 1400))
+        setup = SetupScreen(surface, SimConditions())
+        setup.index = len(setup.rows) - 1
+        setup.draw()
+        assert setup._scroll == 0
+
+    def test_every_weather_setting_is_reachable(self, screen):
+        # A field on SimConditions that no row edits is a setting the pilot
+        # cannot actually set, which is the same as not having it.
+        from aerosim.game.setup_screen import SetupScreen
+
+        setup = SetupScreen(screen, SimConditions())
+        labels = {row.label.lower() for row in setup.rows}
+        for expected in (
+            "cloud cover",
+            "cloud base",
+            "cloud tops",
+            "precipitation",
+            "runway surface",
+            "terrain",
+        ):
+            assert expected in labels
+
+    def test_cycling_a_setting_visits_every_value(self, screen):
+        from aerosim.env.weather import PRECIPITATION, RUNWAY_STATES
+        from aerosim.game.setup_screen import SetupScreen
+
+        setup = SetupScreen(screen, SimConditions())
+        for label, expected in (
+            ("precipitation", set(PRECIPITATION)),
+            ("runway surface", set(RUNWAY_STATES)),
+        ):
+            row = next(r for r in setup.rows if r.label.lower() == label)
+            seen = set()
+            for _ in range(len(expected) + 2):
+                row.adjust(setup.conditions, 1, False)
+                seen.add(
+                    setup.conditions.precipitation
+                    if label == "precipitation"
+                    else setup.conditions.runway_state
+                )
+            assert seen == expected

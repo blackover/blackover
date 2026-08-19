@@ -155,6 +155,7 @@ class Renderer:
         self._mesh_cache: dict[int, tuple] = {}
         # Terrain vertex grids, one per LOD ring, keyed by cell size.
         self._ring_cache: dict[tuple, tuple] = {}
+        self._alpha_layers: dict[str, pygame.Surface] = {}
         self.resize(surface)
 
     def resize(self, surface: pygame.Surface) -> None:
@@ -651,15 +652,25 @@ class Renderer:
         self._mesh_cache[key] = (facets, (points, bounds, colours, highlight))
         return self._mesh_cache[key][1]
 
-    def _shadow_layer(self) -> pygame.Surface:
-        """A reusable translucent layer. Allocating one per frame is not free."""
-        layer = getattr(self, "_shadow_surface", None)
+    def alpha_layer(self, name: str = "shadow") -> pygame.Surface:
+        """A reusable cleared translucent layer, one per named user.
+
+        Named rather than shared: the shadow, the exhaust and the rain are all
+        drawn in the same frame, and one buffer between them would have each
+        clearing the last one's work. Allocating a viewport-sized surface per
+        frame is not free either, so they are kept and cleared.
+        """
+        layers = self._alpha_layers
+        layer = layers.get(name)
         if layer is None or layer.get_size() != self.viewport.size:
             layer = pygame.Surface(self.viewport.size, pygame.SRCALPHA)
-            self._shadow_surface = layer
+            layers[name] = layer
         else:
             layer.fill((0, 0, 0, 0))
         return layer
+
+    def _shadow_layer(self) -> pygame.Surface:
+        return self.alpha_layer("shadow")
 
     def draw_shadow(self, state, facets, dcm_body_to_ned, terrain) -> None:
         """The aircraft's shadow, cast onto the ground along the sun.

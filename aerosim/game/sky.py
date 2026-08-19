@@ -30,11 +30,13 @@ class Sky:
         seed: int = 1,
         cloud_cover: float = 0.45,
         cloud_base: float = 1800.0,
+        cloud_thickness: float = 900.0,
     ) -> None:
         self.time_of_day = time_of_day
         self.visibility = max(1000.0, visibility)
         self.cloud_cover = max(0.0, min(1.0, cloud_cover))
         self.cloud_base = cloud_base
+        self.cloud_thickness = max(0.0, cloud_thickness)
 
         # Sun elevation: a crude but continuous day cycle. Noon overhead,
         # sunrise and sunset near 06:00 and 18:00.
@@ -82,12 +84,24 @@ class Sky:
         self.ambient = 0.32 + 0.26 * daylight
         self.sun_colour = lerp((255, 244, 214), (255, 176, 108), self.golden)
 
+        # What distance fades things *toward*. Normally the horizon; inside a
+        # cloud it becomes the cloud, which is what turns the whole view white
+        # rather than leaving a clear picture with a grey sheet over it.
+        self.fog = self.horizon
+        self.cloud_fog = lerp((60, 66, 78), (206, 210, 218), daylight)
+        # The clear-air colours, kept so an overcast can be blended in and out
+        # of the gradient without losing what it was blended from.
+        self.clear_zenith = self.zenith
+        self.clear_horizon = self.horizon
+        self.overcast = 0.0
+
         self._gradient: pygame.Surface | None = None
         self._gradient_size: tuple[int, int] = (0, 0)
         self._sun_sprite: pygame.Surface | None = None
         self._cloud_sprites: list[pygame.Surface] = []
         self._clouds: np.ndarray | None = None
         self._cloud_seed = seed
+        self._deck: tuple | None = None
 
     # -- colour helpers ----------------------------------------------------
 
@@ -112,14 +126,14 @@ class Sky:
         """Blend a colour toward the horizon with distance."""
         reduced = distance / (self.visibility * self.HAZE_SCALE)
         t = 1.0 - math.exp(-(reduced**self.HAZE_POWER))
-        return lerp(colour, self.horizon, t * self.HAZE_MAX)
+        return lerp(colour, self.fog, t * self.HAZE_MAX)
 
     def haze_array(self, colours: np.ndarray, distance: np.ndarray) -> np.ndarray:
         """Vectorised haze, for the whole terrain grid at once."""
         reduced = distance / (self.visibility * self.HAZE_SCALE)
         t = (1.0 - np.exp(-(reduced**self.HAZE_POWER))) * self.HAZE_MAX
-        horizon = np.array(self.horizon, dtype=float)
-        return np.clip(colours + (horizon - colours) * t[:, None], 0, 255)
+        fog = np.array(self.fog, dtype=float)
+        return np.clip(colours + (fog - colours) * t[:, None], 0, 255)
 
     def shade(self, colour, normal_ned: np.ndarray):
         """Lambert shading against the sun, floored at the ambient level."""
@@ -228,14 +242,51 @@ class Sky:
         ]
         return self._cloud_sprites
 
+    def apply_weather(self, weather, altitude: float) -> bool:
+        """Take visibility and the cloud deck from the weather. Returns in-cloud.
+
+        Called once per frame rather than at construction because the answer
+        changes with altitude: an aircraft climbing through an overcast goes
+        from clear, to forty metres of visibility, to clear again on top.
+        """
+        inside = weather.in_cloud(altitude)
+        self.visibility = max(20.0, weather.visibility_at(altitude))
+
+        # A solid deck overhead makes the sky grey, and that has to reach the
+        # *gradient*, not only the haze: an aircraft under an overcast that
+        # still has a blue sky above it reads as a clear day with a wall of
+        # cloud somewhere else. Above the tops the sky is blue again.
+        overcast = 0.0
+        if weather.has_deck and altitude < weather.cloud_base:
+            overcast = 1.0
+        if abs(overcast - self.overcast) > 1.0e-6:
+            self.overcast = overcast
+            self.zenith = lerp(self.clear_zenith, self.cloud_fog, overcast)
+            self.horizon = lerp(self.clear_horizon, self.cloud_fog, overcast * 0.65)
+            self._gradient = None  # the strip is baked from these two colours
+
+        self.fog = self.cloud_fog if inside else self.horizon
+
+        deck = (weather.cloud_cover, weather.cloud_base, weather.cloud_thickness)
+        if deck != self._deck:
+            self._deck = deck
+            self.cloud_cover = weather.cloud_cover
+            self.cloud_base = max(120.0, weather.cloud_base)
+            self.cloud_thickness = weather.cloud_thickness
+            self._clouds = None  # rebuilt on the next draw
+        return inside
+
     def clouds(self, extent: float = 90000.0, count: int = 260) -> np.ndarray:
         """Puff positions in NED, laid out once and reused every frame.
 
-        Two layers at different heights rather than one deck. A single deck is
-        realistic and almost never on screen: from below it sits overhead,
-        which a level chase camera cannot see, and from above it is a floor you
-        only notice at the horizon. Spreading the puffs vertically keeps some
-        of them in the view wherever the aircraft happens to be.
+        The main layer fills the band the weather declares, so what is drawn
+        and what the aircraft ices up inside are the same deck. A thin layer
+        far above it gives the sky depth at altitude, which one band alone
+        cannot: from above, a single deck is a floor you only notice at the
+        horizon.
+
+        Denser cover packs the puffs closer rather than only adding more of
+        them, because an overcast is a sheet and a few eighths is not.
         """
         if self._clouds is not None:
             return self._clouds
@@ -246,29 +297,31 @@ class Sky:
         rng = np.random.default_rng(self._cloud_seed + 977)
         rows = []
 
-        # Cumulus layer: lumpy, near the aircraft's usual working altitudes.
-        n = max(1, int(count * 0.62 * self.cloud_cover))
+        # Main deck, inside the declared band.
+        n = max(1, int(count * (0.35 + 0.75 * self.cloud_cover)))
+        spread = extent * (1.25 - 0.55 * self.cloud_cover)
         base = self.cloud_base
+        top = max(base + 60.0, base + self.cloud_thickness)
         rows.append(
             np.stack(
                 [
-                    rng.uniform(-extent, extent, n),
-                    rng.uniform(-extent, extent, n),
-                    -(base * rng.uniform(0.7, 2.2, n)),
-                    rng.uniform(700.0, 2600.0, n),
+                    rng.uniform(-spread, spread, n),
+                    rng.uniform(-spread, spread, n),
+                    -rng.uniform(base, top, n),
+                    rng.uniform(700.0, 2600.0, n) * (0.7 + 0.6 * self.cloud_cover),
                 ],
                 axis=1,
             )
         )
 
-        # High, thin layer, which is what gives the sky depth at altitude.
-        n = max(1, int(count * 0.38 * self.cloud_cover))
+        # High, thin layer well above the deck.
+        n = max(1, int(count * 0.30 * max(0.25, self.cloud_cover)))
         rows.append(
             np.stack(
                 [
                     rng.uniform(-extent * 1.6, extent * 1.6, n),
                     rng.uniform(-extent * 1.6, extent * 1.6, n),
-                    -(base * rng.uniform(3.4, 5.2, n)),
+                    -rng.uniform(8000.0, 11500.0, n),
                     rng.uniform(2600.0, 7000.0, n),
                 ],
                 axis=1,

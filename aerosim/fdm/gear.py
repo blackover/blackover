@@ -25,9 +25,16 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..core.frames import cross3, dcm_body_to_ned, dcm_ned_to_body
+from ..env.weather import RUNWAY_STATES
 from ..core.units import to_si
 
 FRICTION_VELOCITY_SCALE = 0.3  # m/s
+
+# How much stiffer a bottomed strut is than the same strut in its travel.
+# Twelve puts the ground mode near 10 Hz on the stop, which a 100 Hz kernel
+# integrates without complaint, and is stiff enough that an aircraft resting
+# on the stop stays on it rather than sinking through.
+BOTTOM_STOP_RATIO = 12.0
 
 
 @dataclass
@@ -64,9 +71,15 @@ class GearModel:
         self.terrain = terrain
         self.terrain_elevation = terrain_elevation
 
+        # Dry-surface coefficients from the data package. The surface state is
+        # applied as multipliers rather than folded in, so the package keeps
+        # declaring the aircraft's own tyres and the weather keeps declaring
+        # the runway -- and a wet-runway landing roll is the dry one scaled by
+        # a number you can read off the weather rather than a second table.
         self.rolling_friction = model.get("landing_gear", "rolling_friction", 0.02)
         self.brake_friction = model.get("landing_gear", "brake_friction", 0.40)
         self.side_friction = model.get("landing_gear", "side_friction", 0.65)
+        self.surface = RUNWAY_STATES["dry"]
         self.max_steer_angle = model.get("landing_gear", "max_steer_angle", math.radians(60.0))
 
         mtom = model.get("mass_properties", "max_takeoff_mass")
@@ -155,9 +168,18 @@ class GearModel:
                 strut.load = 0.0
                 continue
 
-            compression = min(-wheel_height, strut.max_travel)
+            travel = -wheel_height
+            compression = min(travel, strut.max_travel)
             strut.compression = compression
             strut.on_ground = True
+
+            # Past full travel the strut is on its stop, and a stop is not a
+            # spring that has stopped pushing harder. Without this term the
+            # normal force saturates at full compression, and an aircraft
+            # braking hard enough to bottom its nose gear then rotates
+            # straight through it -- the fighter reached 79 degrees nose down
+            # on a flat runway before hitting the ground with its nose.
+            overtravel = max(0.0, travel - strut.max_travel)
 
             # Velocity of this wheel, body axes, including the rotation term.
             wheel_velocity_body = velocity_body + cross3(rates, strut.position)
@@ -170,7 +192,11 @@ class GearModel:
             damper = strut.damping * sink_rate
             if sink_rate < 0.0:
                 damper *= 0.4
-            normal = max(0.0, strut.stiffness * compression + damper)
+            normal = max(
+                0.0,
+                strut.stiffness * (compression + BOTTOM_STOP_RATIO * overtravel)
+                + damper,
+            )
             strut.load = normal
             output.max_load = max(output.max_load, normal)
 
@@ -197,14 +223,18 @@ class GearModel:
             v_roll = float(ground_velocity @ roll_dir_ned)
             v_side = float(ground_velocity @ side_dir_ned)
 
-            mu_roll = self.rolling_friction
+            mu_roll = self.rolling_friction * self.surface.rolling
             if strut.braked:
-                mu_roll += self.brake_friction * max(0.0, min(1.0, brake))
+                mu_roll += (
+                    self.brake_friction
+                    * self.surface.braking
+                    * max(0.0, min(1.0, brake))
+                )
 
             # tanh regularisation: smooth through zero so a stationary aircraft
             # does not oscillate between +mu and -mu at the step rate.
             f_roll = -normal * mu_roll * math.tanh(v_roll / FRICTION_VELOCITY_SCALE)
-            f_side = -normal * self.side_friction * math.tanh(
+            f_side = -normal * self.side_friction * self.surface.cornering * math.tanh(
                 v_side / FRICTION_VELOCITY_SCALE
             )
 

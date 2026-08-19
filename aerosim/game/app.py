@@ -23,7 +23,7 @@ from ..core.units import to_ft, to_kt
 from ..telemetry.recorder import TelemetryRecorder, default_run_dir
 from .charts import FlightCharts
 from .config import DATA_ROOT, SimConditions
-from .effects import Effects
+from .effects import Effects, PrecipitationField
 from .instruments import (
     AMBER,
     CYAN,
@@ -53,6 +53,8 @@ HELP_LINES = [
     ("G", "landing gear up and down"),
     ("F / V", "flaps extend and retract"),
     ("B", "wheel brakes (hold)"),
+    ("I", "anti-ice on and off  (sheds airframe ice)"),
+    ("I", "anti-ice on and off  (sheds airframe ice, costs a little thrust)"),
     ("SPACE", "speedbrake"),
     ("1 / 2 / 3", "autopilot: altitude hold, heading hold, speed hold"),
     ("4", "AUTO FLY  -- takes off, climbs and cruises by itself"),
@@ -136,11 +138,15 @@ class Game:
             self.conditions.time_of_day,
             self.conditions.visibility,
             seed=self.conditions.seed,
+            cloud_cover=self.conditions.cloud_cover,
+            cloud_base=self.conditions.cloud_base,
+            cloud_thickness=self.conditions.cloud_thickness,
         )
         renderer = Renderer(self.surface, sky)
         mesh = build_mesh(model)
         self._shadow_mesh = shadow_outline(model)
         self._effects = Effects(model)
+        self._precipitation = PrecipitationField(self.conditions.seed)
         self._charts = FlightCharts(model, self.fonts)
 
         # Frame the aircraft from its own dimensions rather than a fixed
@@ -262,6 +268,9 @@ class Game:
             self.show_help = not self.show_help
         elif key == pygame.K_c:
             self.show_charts = not self.show_charts
+        elif key == pygame.K_i:
+            pilot.anti_ice = not pilot.anti_ice
+            sim.log("INFO", f"anti-ice {'on' if pilot.anti_ice else 'off'}")
         elif key == pygame.K_COMMA:
             self._charts.window_seconds = max(20.0, self._charts.window_seconds / 1.5)
         elif key == pygame.K_PERIOD:
@@ -349,9 +358,20 @@ class Game:
 
         state = sim.fdm.state
         renderer.camera.follow(state, dt)
-        renderer.draw_sky()
-        renderer.draw_terrain(state, sim.terrain, runway)
-        renderer.draw_clouds(state)
+
+        # Visibility and the cloud deck come from the weather, and change with
+        # altitude: an aircraft climbing through an overcast goes from clear,
+        # to forty metres, to clear again on top.
+        in_cloud = renderer.sky.apply_weather(sim.weather, state.derived.altitude)
+        if in_cloud:
+            # Nothing to draw but the aircraft. The terrain rings and the
+            # cloud billboards would all be fully hazed to the same flat grey,
+            # which is several milliseconds spent painting one colour.
+            self.surface.fill(renderer.sky.fog, view)
+        else:
+            renderer.draw_sky()
+            renderer.draw_terrain(state, sim.terrain, runway)
+            renderer.draw_clouds(state)
 
         # Rebuild the combined facet list only when the gear has visibly moved.
         # A fresh list every frame would defeat the renderer's mesh cache, and
@@ -361,7 +381,8 @@ class Game:
             self._gear_detent = detent
             self._facets = mesh + gear_facets(model, detent / 24.0)
         dcm = dcm_body_to_ned(state.quaternion)
-        renderer.draw_shadow(state, self._shadow_mesh, dcm, sim.terrain)
+        if not in_cloud:
+            renderer.draw_shadow(state, self._shadow_mesh, dcm, sim.terrain)
 
         # Trails behind the aircraft, then the aircraft, then the plume in
         # front of it: the exhaust glows over the nozzle it comes out of, and
@@ -370,6 +391,7 @@ class Game:
         self._effects.draw_trails(renderer)
         renderer.draw_aircraft(state, self._facets, dcm)
         self._effects.draw_exhaust(renderer, state, sim)
+        self._precipitation.draw(renderer, state, sim.weather, sim)
 
         self.surface.set_clip(previous_clip)
 
@@ -460,6 +482,30 @@ class Game:
             GREEN if derived.altitude_agl > 300 else AMBER,
             "topright",
         )
+
+        # Weather, only when there is any. A permanent "clear, dry" line is
+        # one more thing to read past on every flight that has no weather.
+        weather = getattr(sim, "weather", None)
+        if weather is not None:
+            summary = weather.describe()
+            if summary != "clear":
+                visibility = weather.visibility_at(derived.altitude)
+                # Metres below a kilometre: "vis 0.0 km" is the reading you
+                # get in cloud, and it is the one case where the number
+                # matters most.
+                reading = (
+                    f"{visibility:,.0f} m"
+                    if visibility < 1000.0
+                    else f"{visibility / 1000.0:.1f} km"
+                )
+                draw_text(
+                    surface,
+                    self.fonts.small,
+                    f"{summary}   vis {reading}",
+                    (view.right - 14, 82),
+                    AMBER if visibility < 1500.0 else DIM,
+                    "topright",
+                )
 
         # Centre-bottom of the view: the annunciators that matter right now.
         warnings = []
@@ -559,6 +605,9 @@ class Game:
             session.conditions.time_of_day,
             session.conditions.visibility,
             seed=session.conditions.seed,
+            cloud_cover=session.conditions.cloud_cover,
+            cloud_base=session.conditions.cloud_base,
+            cloud_thickness=session.conditions.cloud_thickness,
         )
         renderer = Renderer(self.surface, sky)
         length = model.get("geometry", "fuselage_length", 30.0)
@@ -567,6 +616,7 @@ class Game:
         mesh = build_mesh(model)
         self._shadow_mesh = shadow_outline(model)
         self._effects = Effects(model)
+        self._precipitation = PrecipitationField(session.conditions.seed)
         self._charts = FlightCharts(model, self.fonts)
         runway = Runway(
             length=3200.0,

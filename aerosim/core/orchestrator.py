@@ -31,6 +31,7 @@ from ..control.autoflight import Runway as GuidanceRunway
 from ..control.autopilot import Autopilot, LateralMode, ThrustMode, VerticalMode
 from ..env.atmosphere import Atmosphere
 from ..env.terrain import Terrain
+from ..env.weather import ICE_MASS_FRACTION, Weather
 from ..env.wind import TURBULENCE_PRESETS, WindField
 from ..fdm.fdm import Controls, FlightDynamics
 from ..fdm.trim import apply_trim, trim_level_flight
@@ -65,6 +66,7 @@ class PilotInput:
     brake: float = 0.0
     gear_down: bool = True
     afterburner: bool = False
+    anti_ice: bool = False
 
 
 class Simulation:
@@ -82,6 +84,18 @@ class Simulation:
             profile=conditions.terrain,
             field_elevation=conditions.field_elevation,
         )
+        # Shared with the renderer, exactly like the terrain: the deck drawn
+        # on screen is the deck the aircraft ices up inside, and the runway
+        # the gear brakes on is the one the weather says it is.
+        self.weather = Weather(
+            precipitation=conditions.precipitation,
+            cloud_cover=conditions.cloud_cover,
+            cloud_base=conditions.cloud_base,
+            cloud_thickness=conditions.cloud_thickness,
+            runway_state=conditions.runway_state,
+            visibility=conditions.visibility,
+            field_elevation=conditions.field_elevation,
+        )
 
         self.fdm = FlightDynamics(
             model,
@@ -90,6 +104,7 @@ class Simulation:
             field_elevation=conditions.field_elevation,
             terrain=self.terrain,
         )
+        self.fdm.gear.surface = self.weather.runway
         self.surfaces = ControlSurfaces(model)
         self.autopilot = Autopilot(model)
         self.autoflight = AutoFlight(
@@ -306,6 +321,10 @@ class Simulation:
         # 2 -- pilot or autopilot produce commands
         elevator_cmd, aileron_cmd, rudder_cmd, throttle_cmd = self._commands(dt, derived)
 
+        # 2b -- weather acting on the airframe. Before the systems update so
+        # the added mass and drag are in place for this step's integration.
+        self._update_icing(dt, derived)
+
         # 3 -- aircraft systems: fuel -> electrical -> hydraulic
         self._update_systems(dt)
         self.surfaces.set_hydraulic_pressure(self.hydraulic_pressure)
@@ -425,6 +444,44 @@ class Simulation:
             self.pitch_trim = max(-0.9, min(0.9, self._autopilot_elevator))
 
     # -- systems -----------------------------------------------------------
+
+    def _update_icing(self, dt: float, derived) -> None:
+        """Accrete or shed airframe ice, and tell the pilot which is happening.
+
+        The contamination fraction is the state; the aero model turns it into
+        lost lift, a lower stall angle and added drag, and the mass model
+        turns it into weight forward of the CG. Anti-ice sheds rather than
+        prevents, because a boot or a hot leading edge removes ice that has
+        already formed.
+        """
+        weather = self.weather
+        severity = weather.icing_severity(
+            altitude=derived.altitude,
+            temperature=derived.temperature,
+            mach=derived.mach,
+        )
+        rate = weather.ice_rate(severity, derived.vtas, self.pilot.anti_ice)
+
+        previous = self.fdm.aero.ice
+        ice = max(0.0, min(1.0, previous + rate * dt))
+        self.fdm.aero.ice = ice
+        self.fdm.mass_model.set_ice(
+            ICE_MASS_FRACTION * self.fdm.mass_model.empty_mass * ice
+        )
+
+        # Announce on the way past each quarter, rising only. Announcing on
+        # the way down as well turns a slow shed into a stream of messages
+        # about a problem that is going away.
+        for level, name in ((0.25, "light"), (0.50, "moderate"), (0.80, "severe")):
+            if previous < level <= ice:
+                self.log(
+                    "CAUTION",
+                    f"ICE {name}: stall speed up "
+                    f"{(1.0 / math.sqrt(1.0 - 0.30 * ice) - 1.0) * 100:.0f} %"
+                    + ("" if self.pilot.anti_ice else " -- anti-ice is off"),
+                )
+        if previous >= 0.05 > ice:
+            self.log("INFO", "airframe clear of ice")
 
     def _update_systems(self, dt: float) -> None:
         """Fuel feeds electrical generation, which feeds hydraulic pressure."""

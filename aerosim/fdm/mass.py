@@ -43,6 +43,7 @@ class MassProperties:
     fuel_mass: float = 0.0
     payload_mass: float = 0.0
     empty_mass: float = 0.0
+    ice_mass: float = 0.0
 
 
 class MassModel:
@@ -100,6 +101,14 @@ class MassModel:
 
         self.payload_mass = 0.0
 
+        # Accreted ice. Carried here rather than folded into the empty mass
+        # because it is neither empty nor payload: it arrives during the
+        # flight, it sits forward on the wing and the fin rather than at the
+        # CG, and it goes away again when it sheds.
+        self.ice_mass = 0.0
+        chord = model.get("geometry", "mean_chord", 2.0)
+        self.ice_cg = self.empty_cg + np.array([0.35 * chord, 0.0, 0.0])
+
     # ---------------------------------------------------------------------
 
     @property
@@ -122,6 +131,9 @@ class MassModel:
 
     def set_payload(self, mass: float) -> None:
         self.payload_mass = max(0.0, mass)
+
+    def set_ice(self, mass: float) -> None:
+        self.ice_mass = max(0.0, mass)
 
     def burn(self, mass: float) -> float:
         """Draw ``mass`` kg from the tanks, returning what was actually drawn.
@@ -146,9 +158,10 @@ class MassModel:
 
     def compute(self) -> MassProperties:
         """Current mass, CG and inertia tensor about the CG."""
-        mass = self.empty_mass + self.payload_mass + self.fuel_mass
+        mass = self.empty_mass + self.payload_mass + self.fuel_mass + self.ice_mass
 
         moment = self.empty_mass * self.empty_cg + self.payload_mass * self.payload_cg
+        moment = moment + self.ice_mass * self.ice_cg
         for tank in self.tanks:
             moment = moment + tank.quantity * tank.position
         cg = moment / mass if mass > 0.0 else self.empty_cg.copy()
@@ -165,6 +178,7 @@ class MassModel:
 
         inertia = inertia + _parallel_axis(self.empty_mass, self.empty_cg - cg)
         inertia = inertia + _parallel_axis(self.payload_mass, self.payload_cg - cg)
+        inertia = inertia + _parallel_axis(self.ice_mass, self.ice_cg - cg)
         for tank in self.tanks:
             inertia = inertia + _parallel_axis(tank.quantity, tank.position - cg)
 
@@ -175,6 +189,7 @@ class MassModel:
             inertia_inverse=np.linalg.inv(inertia),
             fuel_mass=self.fuel_mass,
             payload_mass=self.payload_mass,
+            ice_mass=self.ice_mass,
             empty_mass=self.empty_mass,
         )
 
