@@ -1,0 +1,4 @@
+# Windows toplu iş dosyaları CRLF satır sonlarıyla saklanır ve hiç dönüştürülmez:
+# cmd.exe, yalnızca LF içeren dosyalarda "goto" etiketlerini bulamayabilir.
+*.bat -text
+*.cmd -text

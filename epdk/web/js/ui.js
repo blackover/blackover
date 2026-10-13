@@ -192,6 +192,10 @@ export function openModal({ title, subtitle = '', body = '', footer = '', size =
 
   root.appendChild(backdrop);
   setTimeout(() => {
+    // Kullanıcı (ya da otomatik doldurma/barkod okuyucu) pencere içinde bir
+    // alana çoktan odaklandıysa odak çalınmaz — aksi hâlde yazılan metin
+    // ilk alana kayar ve asıl alan boş kalır.
+    if (backdrop.contains(document.activeElement)) return;
     const focusable = backdrop.querySelector('input, select, textarea, button.btn--primary');
     focusable?.focus();
   }, 40);

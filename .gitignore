@@ -13,3 +13,6 @@ paper_portfolio.json
 settings.json
 activity.db
 *.db
+
+# Windows sürümü her açılışta yerelde derlenir
+epdk/windows/*.exe

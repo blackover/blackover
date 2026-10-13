@@ -1,7 +1,8 @@
 > **Bu depoda iki ayrı uygulama var / This repository holds two apps:**
 > - [`epdk/`](epdk/README.md) — **EPDK Petrol Stok İzleme** masaüstü uygulaması
 >   (DEP-1 / DEP-2 / DR bildirimleri: gönder, güncelle, sil, sorgula).
->   Başlatmak için: `python -m epdk`
+>   Windows'ta kurulum gerekmez: `epdk\BASLAT.bat` dosyasına çift tıklayın.
+>   Diğer sistemlerde: `python -m epdk` (Python 3.7+).
 > - `xrp_predictor/` — XRP buy/sell signal predictor (below).
 
 ---

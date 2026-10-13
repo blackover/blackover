@@ -1,22 +1,39 @@
 """Uçtan uca testler: sahte EPDK servisi + uygulama sunucusu.
 
 Çalıştırma:  python -m unittest discover -s tests   ya da   python tests/test_epdk_app.py
+
+İki sunucu vardır ve aynı /api sözleşmesini uygular:
+
+* Python sürümü (``epdk/server.py``) — varsayılan.
+* Windows için kurulumsuz .NET sürümü (``epdk/windows/EpdkStok.cs``).
+
+HTTP düzeyindeki testler (TestApi, TestBrowser) ikisine karşı da çalışır::
+
+    python tests/test_epdk_app.py                       # Python sunucusu
+    EPDK_BACKEND=dotnet python tests/test_epdk_app.py   # .NET sunucusu (Mono ile)
+
+Böylece iki sunucunun davranışı birbirinden ayrışamaz.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
+import socket
+import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 # Testler kullanıcının gerçek ayar dosyalarına dokunmamalı.
 TEMP_HOME = tempfile.mkdtemp(prefix="epdk-test-")
@@ -28,9 +45,13 @@ from epdk.schema import DEP1, DEP2, DR             # noqa: E402
 from epdk.server import create_server              # noqa: E402
 from epdk.validation import clean_payload, split_issues, validate  # noqa: E402
 
+BACKEND = os.environ.get("EPDK_BACKEND", "python").lower()
+WEB_DIR = ROOT / "epdk" / "web"
+DOTNET_SOURCE = ROOT / "epdk" / "windows" / "EpdkStok.cs"
+_DOTNET_EXE: Path | None = None
+
 
 def free_port() -> int:
-    import socket
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
@@ -42,8 +63,45 @@ def half_hour_ago() -> str:
     return (now - timedelta(minutes=30)).isoformat(timespec="seconds")
 
 
+def compile_csharp5(source: Path, output: Path) -> subprocess.CompletedProcess:
+    """C# kaynağını Windows Server 2012'deki csc.exe'nin dili olan C# 5 ile derler.
+
+    ``-langversion:5`` daha yeni söz dizimlerini (``$"..."``, ``?.``) reddeder;
+    burada derlenen kod eski Windows'taki yerleşik derleyiciyle de derlenir.
+    """
+    return subprocess.run(
+        ["mcs", "-langversion:5", "-optimize+", "-warn:4", "-target:exe",
+         f"-out:{output}", "-r:System.Web.Extensions.dll", "-r:System.Core.dll",
+         str(source)],
+        capture_output=True, text=True, timeout=300,
+    )
+
+
+def dotnet_executable() -> Path:
+    """.NET sunucusunu (bir kez) derler ve yolunu döndürür."""
+    global _DOTNET_EXE
+    if _DOTNET_EXE is None:
+        output = Path(tempfile.mkdtemp(prefix="epdk-dotnet-")) / "EpdkStok.exe"
+        result = compile_csharp5(DOTNET_SOURCE, output)
+        if result.returncode != 0:
+            raise RuntimeError(f"C# derlemesi başarısız:\n{result.stdout}\n{result.stderr}")
+        _DOTNET_EXE = output
+    return _DOTNET_EXE
+
+
+def wait_for_port(port: int, timeout: float = 30.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with socket.socket() as sock:
+            sock.settimeout(0.5)
+            if sock.connect_ex(("127.0.0.1", port)) == 0:
+                return
+        time.sleep(0.1)
+    raise RuntimeError(f"{port} numaralı port {timeout} sn içinde açılmadı")
+
+
 class ServersMixin:
-    """Sahte servisi ve uygulama sunucusunu ayağa kaldırır."""
+    """Sahte servisi ve seçilen uygulama sunucusunu ayağa kaldırır."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -54,18 +112,35 @@ class ServersMixin:
         cls.mock_base = f"http://127.0.0.1:{cls.mock_port}/petrolstok/api"
 
         cls.app_port = free_port()
-        cls.app = create_server("127.0.0.1", cls.app_port)
-        cls.app_thread = threading.Thread(target=cls.app.serve_forever, daemon=True)
-        cls.app_thread.start()
+        cls.app = None
+        cls.app_process = None
+        if BACKEND == "dotnet":
+            cls.app_process = subprocess.Popen(
+                ["mono", str(dotnet_executable()), "--port", str(cls.app_port),
+                 "--no-browser", "--web", str(WEB_DIR)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            )
+            wait_for_port(cls.app_port)
+        else:
+            cls.app = create_server("127.0.0.1", cls.app_port)
+            cls.app_thread = threading.Thread(target=cls.app.serve_forever, daemon=True)
+            cls.app_thread.start()
         cls.app_base = f"http://127.0.0.1:{cls.app_port}"
 
     @classmethod
     def tearDownClass(cls) -> None:
         cls.mock.shutdown()
         cls.mock.server_close()
-        cls.app.shutdown()
-        cls.app.server_close()
-        cls.app.state.store.close()
+        if cls.app_process is not None:
+            cls.app_process.terminate()
+            try:
+                cls.app_process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                cls.app_process.kill()
+        if cls.app is not None:
+            cls.app.shutdown()
+            cls.app.server_close()
+            cls.app.state.store.close()
 
     # ------------------------------------------------------------------
     def call(self, path, method="GET", body=None, headers=None, expect_ok=True):
@@ -637,6 +712,39 @@ class TestBrowser(ServersMixin, unittest.TestCase):
             result.returncode, 0,
             f"tarayıcı testi başarısız:\n{result.stdout}\n{result.stderr}",
         )
+
+
+class TestWindowsBuild(unittest.TestCase):
+    """Windows için kurulumsuz sürümün güvenceleri."""
+
+    def test_schema_json_matches_python_schema(self):
+        """.NET sunucusu alan tanımlarını schema.json'dan okur; güncel olmalı.
+
+        Kalırsa: python -m epdk.export_schema
+        """
+        from epdk.export_schema import SCHEMA_PATH, render
+        self.assertEqual(
+            SCHEMA_PATH.read_text(encoding="utf-8"), render(),
+            "epdk/web/schema.json eski — 'python -m epdk.export_schema' çalıştırın",
+        )
+
+    @unittest.skipUnless(shutil.which("mcs"), "Mono derleyicisi (mcs) gerekli")
+    def test_compiles_as_csharp5_for_windows_server_2012(self):
+        """Windows Server 2012'deki yerleşik csc.exe yalnızca C# 5 tanır."""
+        output = Path(tempfile.mkdtemp(prefix="epdk-cs5-")) / "EpdkStok.exe"
+        result = compile_csharp5(DOTNET_SOURCE, output)
+        self.assertEqual(result.returncode, 0, f"{result.stdout}\n{result.stderr}")
+        self.assertNotIn("warning", (result.stdout + result.stderr).lower())
+
+    def test_launcher_targets_builtin_dotnet_compiler(self):
+        raw = (ROOT / "epdk" / "BASLAT.bat").read_bytes()
+        launcher = raw.decode("ascii")
+        self.assertIn(r"Microsoft.NET\Framework64\v4.0.30319\csc.exe", launcher)
+        self.assertIn("EpdkStok.cs", launcher)
+        # cmd.exe toplu iş dosyaları OEM kod sayfasıyla okunur: yalnızca ASCII
+        self.assertTrue(launcher.isascii())
+        # LF satır sonlarında cmd.exe "goto" etiketlerini bulamayabilir
+        self.assertEqual(raw.count(b"\n"), raw.count(b"\r\n"), "BASLAT.bat CRLF olmalı")
 
 
 if __name__ == "__main__":

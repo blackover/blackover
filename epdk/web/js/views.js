@@ -1109,6 +1109,7 @@ export async function renderSettings(ctx) {
           <dl class="kv">
             <dt>Uygulama</dt><dd>${escapeHtml(state.app.name)}</dd>
             <dt>Sürüm</dt><dd>${escapeHtml(state.app.version)}</dd>
+            <dt>Çalışma ortamı</dt><dd>${escapeHtml(state.app.runtime || '—')}</dd>
             <dt>Gümrük kodları</dt>
             <dd class="small">${state.gumrukOptions.map((option) =>
               escapeHtml(pick(option, 'label'))).join('<br>')}</dd>

@@ -2,6 +2,8 @@
 <html lang="tr" data-theme="light">
 <head>
   <meta charset="utf-8">
+  <!-- İntranet/localhost sitelerinde IE'nin eski uyumluluk kipine düşmesini önler -->
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EPDK Petrol Stok İzleme</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛽</text></svg>">
@@ -157,6 +159,48 @@
 
   <div id="modal-root"></div>
   <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <!-- ============ ESKİ TARAYICI UYARISI ============
+       Arayüz modern bir tarayıcı (Chrome, Edge, Firefox) ister. Aşağıdaki iki
+       betik bilerek eski JavaScript ile yazılmıştır: Internet Explorer'da da
+       çalışır ve boş sayfa yerine ne yapılacağını anlatan bir uyarı gösterir. -->
+  <script>
+    window.__epdkShowLegacy = function () {
+      var url = window.location.protocol + '//' + window.location.host + '/';
+      var box = document.createElement('div');
+      box.setAttribute('style', 'max-width:640px;margin:48px auto;padding:32px;'
+        + 'font-family:Segoe UI,Arial,sans-serif;color:#0f172a;background:#fff;'
+        + 'border:1px solid #e2e8f0;border-radius:12px;line-height:1.6');
+      box.innerHTML =
+          '<div style="font-size:22px;font-weight:bold;margin-bottom:8px">'
+        + '&#9888; Bu tarayıcı desteklenmiyor</div>'
+        + '<p style="margin:0 0 16px;color:#475569">EPDK Petrol Stok İzleme modern bir '
+        + 'tarayıcı gerektirir. Lütfen aşağıdaki adresi <b>Google Chrome</b>, '
+        + '<b>Microsoft Edge</b> veya <b>Mozilla Firefox</b> ile açın:</p>'
+        + '<input readonly onclick="this.select()" value="' + url + '" style="width:100%;'
+        + 'box-sizing:border-box;padding:10px 12px;font-size:16px;border:1px solid #cbd5e1;'
+        + 'border-radius:8px;font-family:Consolas,monospace">'
+        + '<p style="margin:16px 0 0;color:#475569">Uygulama arka planda çalışmaya devam '
+        + 'ediyor; adresi desteklenen bir tarayıcıya yapıştırmanız yeterlidir.</p>'
+        + '<p style="margin:16px 0 0;padding:12px 14px;background:#f1f5f9;border-radius:8px;'
+        + 'color:#475569;font-size:13px"><b>Windows Server 2012 / 2012 R2:</b> Chrome 109, '
+        + 'Edge 109 ve Firefox ESR 115 bu sistemlerde çalışan sürümlerdir ve uygulamayı '
+        + 'sorunsuz açar.</p>'
+        + '<p style="margin:16px 0 0;color:#94a3b8;font-size:12px">This browser is not '
+        + 'supported. Please open the address above in Chrome, Edge or Firefox.</p>';
+      document.body.innerHTML = '';
+      document.body.style.overflow = 'auto';
+      document.body.style.background = '#f1f5f9';
+      document.body.appendChild(box);
+    };
+    // Modül söz dizimini tanıyan ama çok eski sürüm bir tarayıcıda uygulama hiç
+    // başlamazsa (söz dizimi hatası) birkaç saniye sonra aynı uyarı gösterilir.
+    setTimeout(function () {
+      if (!window.__epdkBooted) window.__epdkShowLegacy();
+    }, 10000);
+  </script>
+  <!-- Yalnızca ES modüllerini çalıştıramayan tarayıcılarda (IE) çalışır. -->
+  <script nomodule>window.__epdkShowLegacy();</script>
 
   <script type="module" src="/js/app.js"></script>
 </body>

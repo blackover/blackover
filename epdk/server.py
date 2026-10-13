@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import platform
 import posixpath
 import threading
 import traceback
@@ -128,7 +129,8 @@ class Api:
     def meta(self, _payload: Dict[str, Any], _query: Dict[str, Any]) -> Dict[str, Any]:
         settings = dict(self.state.settings)
         return {
-            "app": {"name": APP_NAME, "version": __version__},
+            "app": {"name": APP_NAME, "version": __version__,
+                    "runtime": f"Python {platform.python_version()}"},
             "environments": ENVIRONMENTS,
             "settings": settings,
             "schema": describe(),

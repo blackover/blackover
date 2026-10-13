@@ -11,6 +11,9 @@ import {
   renderTanks, resetViewState,
 } from './views.js';
 
+// Modüller başarıyla yüklendi: index.html'deki eski tarayıcı uyarısı gösterilmez.
+window.__epdkBooted = true;
+
 const appNode = document.getElementById('app');
 const loginNode = document.getElementById('login-screen');
 

@@ -36,28 +36,75 @@ yazmak ve hataları servis reddettikten sonra öğrenmek gerekir. Bu uygulama:
 
 ## Kurulum
 
-Yalnızca **Python 3.9 veya üstü** gerekir. Kurulacak ek paket **yoktur** —
-uygulama tamamen standart kütüphane ile yazılmıştır.
+### Windows — kurulum gerekmez
+
+**`epdk\BASLAT.bat` dosyasına çift tıklayın.** Hepsi bu.
+
+- Python **gerekmez**.
+- Kurulum programı, yönetici yetkisi ya da internetten dosya indirmek **gerekmez**.
+- Klasörü sunucuya kopyalayıp çift tıklamanız yeterlidir.
+
+Nasıl çalışır: Windows 8 / Windows Server 2012 ve sonrasında **.NET Framework
+4.5 ve C# derleyicisi (`csc.exe`) Windows ile birlikte gelir.** `BASLAT.bat`
+uygulamayı (`windows\EpdkStok.cs`) bu hazır derleyiciyle her açılışta 1–3
+saniyede derleyip başlatır. Her açılışta derlendiği için güncellemeden sonra
+eski sürümün çalışması gibi bir sorun olmaz. Arayüz, kurallar ve davranış
+Python sürümüyle birebir aynıdır — aynı 48 test her iki sürüme karşı çalışır.
+
+| Windows sürümü | Durum |
+|---|---|
+| Windows 8 / 8.1 / 10 / 11 | Kurulumsuz çalışır |
+| Windows Server 2012 / 2012 R2 / 2016 / 2019 / 2022 | Kurulumsuz çalışır |
+| Windows 7 / Server 2008 R2 | .NET Framework 4.5+ gerekir (çoğunlukla Windows Update ile zaten yüklüdür) |
+
+Uygulama açıkken `BASLAT.bat`'a yeniden tıklarsanız ikinci bir kopya açılmaz;
+açık olan uygulamaya geçilir.
+
+```bat
+BASLAT.bat --port 8788      :: farklı port
+BASLAT.bat --no-browser     :: tarayıcıyı açma
+```
+
+### Tarayıcı
+
+Arayüz **Google Chrome, Microsoft Edge veya Mozilla Firefox** ile çalışır.
+**Internet Explorer desteklenmez** — IE ile açılırsa boş sayfa yerine hangi
+tarayıcının kullanılacağını anlatan bir uyarı görünür. `BASLAT.bat`, varsayılan
+tarayıcı IE olsa bile önce Chrome, Edge ve Firefox'u arar ve onlarla açar.
+
+> **Windows Server 2012 / 2012 R2:** Bu sistemlerde çalışan son sürümler
+> **Chrome 109**, **Edge 109** ve **Firefox ESR 115**'tir; üçü de uygulamayı
+> sorunsuz açar. Sunucuda bunlardan biri yoksa, uygulamanın tek ön koşulu
+> budur.
+
+### macOS / Linux (ya da Python tercih ederseniz)
+
+**Python 3.7 veya üstü** yeterlidir; kurulacak ek paket yoktur.
 
 ```bash
-python -m epdk
+python -m epdk                 # ya da: ./epdk/baslat.sh
+python -m epdk --port 8888     # farklı port
+python -m epdk --no-browser    # tarayıcıyı açma
+python -m epdk --verbose       # istek günlüğünü göster
 ```
 
 Tarayıcınız `http://127.0.0.1:8787/` adresinde kendiliğinden açılır.
 
-| Ortam | Başlatma |
-|---|---|
-| Windows | `epdk\BASLAT.bat` dosyasına çift tıklayın |
-| macOS / Linux | `./epdk/baslat.sh` |
-| Her ortam | `python -m epdk` |
+### Windows sürümü hakkında bilinmesi gerekenler
 
-Seçenekler:
-
-```bash
-python -m epdk --port 8888      # farklı port
-python -m epdk --no-browser     # tarayıcıyı açma
-python -m epdk --verbose        # istek günlüğünü göster
-```
+- **Ayarlar ve kayıtlı müşteriler** iki sürümde ortaktır (`~\.epdk-stok\settings.json`).
+  **İşlem geçmişi** ise ayrıdır: Windows sürümü `activity.jsonl`, Python sürümü
+  `activity.db` kullanır.
+- **Proxy:** Windows'un sistem proxy ayarı (Internet Seçenekleri) kullanılır.
+  Kimlik doğrulaması isteyen proxy'ler desteklenmez; bu durumda BT biriminden
+  `petrolstok.epdk.gov.tr` için istisna isteyin. Proxy'yi tamamen atlamak için
+  `EPDK_PROXY=none` ortam değişkeni tanımlanabilir.
+- **TLS 1.2:** Bağlantı Windows'un kendi TLS katmanıyla kurulur. Çok eski ya da
+  güncellenmemiş bir sunucuda şifreleme ya da kök sertifika eksikse uygulama
+  bunu açık bir mesajla bildirir; o durumda Windows Update ile güncelleme ya da
+  Python sürümü çözümdür.
+- Ayarlar sayfasındaki **Hakkında** kartında hangi sürümün çalıştığı (Python ya da
+  .NET) görünür.
 
 ---
 
@@ -250,15 +297,25 @@ kayıtlarla gelir ve gerçek servisin hata mesajlarını üretir.
 ## Testler
 
 ```bash
-python tests/test_epdk_app.py
+python tests/test_epdk_app.py                       # Python sunucusu
+EPDK_BACKEND=dotnet python tests/test_epdk_app.py   # Windows (.NET) sunucusu
 ```
 
-45 test: istemci sözleşmesi (token'ın `message` içinde gelmesi, gövdeli GET
+48 test: istemci sözleşmesi (token'ın `message` içinde gelmesi, gövdeli GET
 sorguları), doğrulama kuralları, uçtan uca CRUD, toplu yükleme, kayıt defteri,
 sunucu güvenliği ve müşteri değişiminde listelerin tazelenmesi.
 
-Sonuncusu gerçek bir tarayıcıda çalışır (`tests/browser_customer_switch.js`);
-`node` ve `playwright` kurulu değilse o test atlanır, diğerleri çalışır.
+HTTP düzeyindeki testler **her iki sunucuya karşı da** çalışır; böylece Python ve
+Windows sürümlerinin davranışı birbirinden ayrışamaz. Ayrıca:
+
+- Windows kaynağının, Windows Server 2012'deki yerleşik derleyicinin dili olan
+  **C# 5 ile derlendiği** denetlenir (`-langversion:5`, Mono ile).
+- `epdk/web/schema.json` dosyasının Python şemasıyla aynı olduğu denetlenir.
+- `BASLAT.bat`'ın ASCII ve CRLF olduğu denetlenir (cmd.exe gereksinimi).
+
+Müşteri değişimi testi gerçek bir tarayıcıda çalışır
+(`tests/browser_customer_switch.js`); `node` ve `playwright` yoksa atlanır. .NET
+testleri için Mono (`mcs`, `mono`) gerekir; yoksa ilgili testler atlanır.
 
 ---
 
@@ -271,7 +328,9 @@ Sonuncusu gerçek bir tarayıcıda çalışır (`tests/browser_customer_switch.j
 
 Tarayıcı doğrudan EPDK'ya istek atamaz (CORS engeli ve token'ın tarayıcıda
 tutulmasının sakıncası). Bu yüzden uygulama bilgisayarınızda küçük bir sunucu
-çalıştırır. Sunucu yalnızca `127.0.0.1` adresini dinler ve `/api` uçları özel
+çalıştırır. Bu sunucunun iki eş gerçeklemesi vardır: Python (`epdk/server.py`)
+ve Windows için .NET (`epdk/windows/EpdkStok.cs`). Arayüz ve `/api` sözleşmesi
+ortaktır; alan tanımlarının tek kaynağı `epdk/schema.py`'dir. Sunucu yalnızca `127.0.0.1` adresini dinler ve `/api` uçları özel
 bir başlık ister; böylece başka bir web sitesi tarayıcınız üzerinden bu
 uygulamaya istek gönderemez.
 
@@ -284,6 +343,9 @@ uygulamaya istek gönderemez.
 | `epdk/server.py` | Yerel HTTP sunucusu ve `/api` uçları |
 | `epdk/store.py` | SQLite kayıt defteri (parolalar maskelenir) |
 | `epdk/mock_service.py` | Deneme/eğitim için sahte EPDK servisi |
+| `epdk/windows/EpdkStok.cs` | Windows için kurulumsuz sunucu (C# 5, .NET 4.5) |
+| `epdk/BASLAT.bat` | Windows başlatıcı: yerleşik `csc.exe` ile derler ve açar |
+| `epdk/export_schema.py` | Şemayı `web/schema.json` olarak dışa aktarır (.NET sürümü okur) |
 | `epdk/web/js/slots.js` | Yarım saatlik bildirim döngüsü ve eksik tank takibi |
 | `epdk/web/js/charts.js` | Panel grafikleri (bağımlılıksız SVG) |
 | `epdk/web/` | Arayüz (bağımlılıksız HTML + CSS + ES modülleri) |

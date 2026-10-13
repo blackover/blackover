@@ -8,7 +8,7 @@ if command -v python3 >/dev/null 2>&1; then
 elif command -v python >/dev/null 2>&1; then
   PY=python
 else
-  echo "HATA: Python bulunamadı. Python 3.9 veya üstünü kurun." >&2
+  echo "HATA: Python bulunamadı. Python 3.7 veya üstünü kurun." >&2
   exit 1
 fi
 
