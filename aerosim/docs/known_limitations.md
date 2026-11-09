@@ -415,11 +415,81 @@ For the avoidance of doubt, none of the following exist:
 - Certification-grade correlation with any real aircraft type
 - **Any weapon, sensor, targeting or mission system.** The AeroFalcon-X is an
   airframe. Its external stores exist only as mass and parasite drag, because
-  that is the part which changes how the aircraft flies.
+  that is the part which changes how the aircraft flies. See §15 for what the
+  air-combat mode does and does not add to this.
 
 ---
 
-## 15. Design analysis
+## 15. Air combat
+
+**Simplification.** An engagement is a second `Simulation` on the same clock,
+flown by the control laws in `combat/adversary.py`, scored on *tracking time*
+inside a geometric envelope.
+
+**There is still no weapon.** This is the limitation most likely to be
+misread, so plainly: the "gun envelope" is a scoring volume and nothing else.
+Nothing is fired. No projectile is created, none flies, none arrives, and
+nothing is ever hit or damaged. The envelope asks three geometric questions —
+is the other aircraft within 9° of my nose, between 90 m and 850 m away, and
+rotating across my line of sight slower than 0.30 rad/s — and integrates the
+time for which all three are true. There is no ballistics, no dispersion, no
+convergence, no ammunition, no rounds-per-second, no hit probability and no
+damage model. The lead-computing pipper on the HUD does use a muzzle velocity
+and a time of flight, but only to decide *where to draw a circle*.
+
+**Consequence.** Tracking time is a measure of flying, not of lethality. Two
+seconds in the envelope means you held a firing position for two seconds; it
+does not mean you would have hit anything, and the simulator has no opinion
+on that. The envelope numbers are a defensible shape for a gun solution
+rather than a model of one, and the rate limit in particular is a judgement:
+a lead-computing sight can hold a faster-crossing target than 0.30 rad/s, and
+a fixed reticle cannot hold one nearly that fast.
+
+**The sensing is perfect and free.** Both aircraft know each other's exact
+position, velocity and attitude at every step. There is no radar, no seeker,
+no visual acquisition, no lost visual, no lock, no break-lock, no
+countermeasure and no sun to lose someone in. In a real fight the hardest
+part is often knowing where the other aeroplane is; here it is given.
+
+**The adversary is a credible opponent, not a good pilot.** It picks
+manoeuvres on real criteria, manages its energy, respects the stall and the
+ground, and drives the same `PilotInput` a human does — it has no control
+authority a player lacks and no performance the data package does not give
+it. Within that it flies imperfectly on purpose and imperfectly by accident.
+
+Measured, flying it against a copy of itself over four setups and 150
+seconds each:
+
+- It does achieve gun solutions. A head-on pass between two veterans gave a
+  best pointing error of 8.2° inside the 9° cone, with tracking time on both
+  sides — so the whole chain from geometry through the control laws to the
+  score does work in a real fight.
+- Those solutions are brief: a half second, against the two seconds that
+  count as decisive. Two evenly matched pilots mostly deny each other.
+- From an offensive perch it tends to stabilise behind the bandit and point
+  rather than close, because a tail chase between identical aircraft at
+  identical speed does not close and converting the perch needs a corner cut
+  it does not reliably commit to.
+- A neutral line-abreast merge between two veterans reliably ends in the
+  separation floor below. Both aircraft deconflict, both offset to the
+  correct side, and the available g still does not build enough lateral
+  displacement in the time the closure allows.
+
+All four are outcomes of the laws as written rather than tuned behaviour, and
+all four are things a competent human pilot does better.
+
+**Two aircraft only.** Nothing in the geometry or the tactics generalises to
+three. There is no formation, no wingman, no mutual support, no deconfliction
+and no concept of a third contact.
+
+**A hard separation floor ends the fight.** Pass inside 150 m and the
+engagement stops with a "knock it off", as training rules do. There is no
+collision model, so without that floor two aircraft would fly through each
+other and the scoring would quietly reward it.
+
+---
+
+## 16. Design analysis
 
 **Simplification.** ``--design`` grades a package by interrogating the same
 models the simulator flies, and linearises the force build-up numerically
@@ -439,7 +509,7 @@ an aircraft that does not exist.
 
 ---
 
-## 16. Verification status
+## 17. Verification status
 
 Modelling limitations and *verification* limitations are different things.
 Every layer in this build has passing tests — see `README.md` for the count —

@@ -24,5 +24,9 @@ wing_dihedral: "5.0 deg"
 wing_incidence: "1.5 deg"
 
 horizontal_tail_area: "31.0 m2"
-vertical_tail_area: "21.5 m2"
+# Fin volume coefficient Sv*lv/(S*b) = 25.0*15.2/(124.6*34.3) = 0.089, inside
+# the 0.08-0.10 a narrow-body is usually drawn with. It was 21.5 m2 and 0.0765,
+# which is under the band, and the dutch roll it produced damped at 0.05
+# against a Level 1 target of 0.08.
+vertical_tail_area: "25.0 m2"
 tail_arm: "15.2 m"

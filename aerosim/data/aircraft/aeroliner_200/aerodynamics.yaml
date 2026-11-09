@@ -45,9 +45,13 @@ lateral:
   # very easy to end up with an airliner that rolls like a fighter.
   cl_da: 0.042
   cl_dr: 0.012
-  cn_beta: "0.120 1/rad"
+  # Fin and fuselage: the fin contributes about +0.155 and the fuselage
+  # destabilises by about -0.035. Enlarging the fin from 21.5 to 25.0 m2
+  # scales the fin part by 1.163 and leaves the fuselage alone.
+  cn_beta: "0.145 1/rad"
   cn_p: "-0.055 1/rad"
-  cn_r: "-0.200 1/rad"
+  # Yaw damping is almost all fin, so it scales with the fin directly.
+  cn_r: "-0.233 1/rad"
   cn_da: -0.006
   cn_dr: -0.095
   beta_max: "20.0 deg"

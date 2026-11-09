@@ -29,6 +29,7 @@ from ..control.actuators import ActuatorFailure, ControlSurfaces
 from ..control.autoflight import AutoFlight
 from ..control.autoflight import Runway as GuidanceRunway
 from ..control.autopilot import Autopilot, LateralMode, ThrustMode, VerticalMode
+from ..control.dampers import YawDamper
 from ..env.atmosphere import Atmosphere
 from ..env.terrain import Terrain
 from ..env.weather import ICE_MASS_FRACTION, Weather
@@ -106,6 +107,9 @@ class Simulation:
         )
         self.fdm.gear.surface = self.weather.runway
         self.surfaces = ControlSurfaces(model)
+        # An aircraft system, not a pilot aid: it is fitted to the aeroplane
+        # and the setup screen's flight assist does not switch it.
+        self.yaw_damper = YawDamper(model)
         self.autopilot = Autopilot(model)
         self.autoflight = AutoFlight(
             model,
@@ -171,6 +175,7 @@ class Simulation:
         self.fdm.aero.extra_cd0 = stores_cd * conditions.payload_fraction
 
         self.surfaces.reset()
+        self.yaw_damper.reset()
         self.autopilot.disengage()
         self.clock.reset()
         self.events.clear()
@@ -271,6 +276,44 @@ class Simulation:
             f"airborne start, trimmed at {to_kt(self.fdm.state.derived.vcas):.0f} kt CAS, "
             f"{to_ft(altitude):,.0f} ft",
         )
+
+    def place_airborne(
+        self,
+        *,
+        altitude: float,
+        vtas: float,
+        heading: float,
+        north: float = 0.0,
+        east: float = 0.0,
+    ) -> None:
+        """Trim and place this aircraft anywhere, airborne and level.
+
+        The same trim the setup screen's airborne start uses, but at a
+        position and heading of the caller's choosing. Exists for the second
+        aircraft in an engagement: a bandit dropped in untrimmed spends the
+        first ten seconds of the fight sorting itself out, which is ten
+        seconds the player spends shooting at something that is not flying.
+        """
+        trim = trim_level_flight(
+            self.fdm, altitude=altitude, vtas=vtas, gamma=0.0, flap=0.0,
+            gear_down=False,
+        )
+        apply_trim(
+            self.fdm,
+            trim,
+            vtas=vtas,
+            altitude=altitude,
+            heading=heading,
+            north=north,
+            east=east,
+            controls=Controls(gear_down=False, flap=0.0),
+        )
+        self.pilot = PilotInput(gear_down=False, flap=0.0)
+        self.throttle = trim.throttle
+        self.surfaces.flap.position = 0.0
+        self.surfaces.gear_position = 0.0
+        self.surfaces.elevator.position = trim.elevator
+        self.pitch_trim = trim.elevator
 
     # -- logging -----------------------------------------------------------
 
@@ -394,7 +437,12 @@ class Simulation:
             speed_scale = min(1.0, derived.vtas / 90.0)
             elevator += 0.55 * float(rates[1]) * speed_scale  # nose-down rate -> nose-up surface
             aileron -= 0.28 * float(rates[0]) * speed_scale  # roll right -> left aileron
-            rudder += 0.30 * float(rates[2]) * speed_scale  # yaw right -> left rudder
+
+        # The yaw damper is separate from the assist and runs whatever the
+        # assist is set to, because it is part of the aircraft rather than a
+        # concession to the pilot. It is also washed out, so unlike the rate
+        # feedback above it does not fight a steady turn.
+        rudder += self.yaw_damper.update(dt, float(self.fdm.state.rates[2]))
 
         throttle = self.throttle
 

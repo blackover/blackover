@@ -104,8 +104,14 @@ def _design(aircraft: str, altitude_ft: float) -> int:
         return 1
 
     altitude = ft(altitude_ft)
-    modes = _modes_at(model, altitude)
-    print(format_report(design_report(model, altitude=altitude, modes=modes)))
+    modes, augmented = _modes_at(model, altitude)
+    print(
+        format_report(
+            design_report(
+                model, altitude=altitude, modes=modes, augmented=augmented
+            )
+        )
+    )
     return 0
 
 
@@ -118,7 +124,7 @@ def _modes_at(model, altitude: float):
     an un-trimmable design is worth reporting the *rest* of the figures for.
     """
     from .core.orchestrator import Simulation
-    from .analysis.modes import natural_modes
+    from .analysis.modes import augmented_modes, natural_modes
     from .game.config import SimConditions, StartMode
 
     cruise = model.get("limitations", "vmo") * 0.72
@@ -135,10 +141,10 @@ def _modes_at(model, altitude: float):
         for _ in range(int(3.0 / sim.clock.dt)):
             sim.step()
         if sim.crashed:
-            return {}
-        return natural_modes(sim.fdm)
+            return {}, {}
+        return natural_modes(sim.fdm), augmented_modes(sim.fdm, sim.yaw_damper)
     except Exception:  # noqa: BLE001 -- a report without modes beats no report
-        return {}
+        return {}, {}
 
 
 if __name__ == "__main__":

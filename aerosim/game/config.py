@@ -52,6 +52,38 @@ FAILURE_LABELS = {
 }
 
 
+class Engagement:
+    """Which air-combat setup to start in, if any.
+
+    These are the names a training syllabus uses, and each is a different
+    lesson: the perches teach converting a position you already have, the
+    neutral merge teaches earning one, and the head-on pass teaches the
+    merge itself.
+    """
+
+    NONE = "none"
+    NEUTRAL = "neutral"
+    OFFENSIVE = "offensive"
+    DEFENSIVE = "defensive"
+    HEAD_ON = "head_on"
+
+
+ENGAGEMENT_LABELS = {
+    Engagement.NONE: "None  (free flight)",
+    Engagement.NEUTRAL: "Neutral merge  (line abreast)",
+    Engagement.OFFENSIVE: "Offensive perch  (you behind)",
+    Engagement.DEFENSIVE: "Defensive perch  (bandit behind)",
+    Engagement.HEAD_ON: "Head-on pass  (nose to nose)",
+}
+
+SKILL_LABELS = {
+    "novice": "Novice  (slow, points and hopes)",
+    "regular": "Regular  (flies them, misses subtleties)",
+    "veteran": "Veteran  (quick, precise, keeps its energy)",
+    "ace": "Ace  (reacts at once, wastes nothing)",
+}
+
+
 @dataclass
 class SimConditions:
     """The complete pre-flight configuration.
@@ -108,6 +140,13 @@ class SimConditions:
     seed: int = 1
     dt: float = 0.01
 
+    # -- air combat -------------------------------------------------------
+    # Only offered for the fighter, and only from an airborne start: a
+    # dogfight that begins on a runway is not a dogfight, and an airliner in
+    # one is not a fair fight in either direction.
+    engagement: str = Engagement.NONE
+    adversary_skill: str = "regular"
+
     # -- assists ----------------------------------------------------------
     flight_assist: bool = True  # damps rate commands, does not fly for you
 
@@ -146,8 +185,24 @@ class SimConditions:
             ("Terrain", self.terrain),
             ("ISA offset", f"{self.temperature_offset:+.0f} C"),
             ("Failure", FAILURE_LABELS[self.failure]),
+            ("Engagement", ENGAGEMENT_LABELS[self.engagement].split(" --")[0]),
             ("Seed", str(self.seed)),
         ]
+
+    @property
+    def engagement_available(self) -> bool:
+        """Is a dogfight possible in this configuration?
+
+        A fight needs a fighter and needs to start in the air. Offering it
+        otherwise would mean either spawning a bandit over a runway or
+        putting an airliner in a turning fight, and neither is something the
+        simulator should pretend to model.
+        """
+        return self.is_military and self.start_mode == StartMode.AIRBORNE
+
+    @property
+    def fighting(self) -> bool:
+        return self.engagement != Engagement.NONE and self.engagement_available
 
     def validate(self, model=None) -> list[str]:
         """Check the configuration against the aircraft, returning warnings.

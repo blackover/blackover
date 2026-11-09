@@ -92,6 +92,7 @@ Chase view above, full instrument panel below.
 | `0` | autopilot and autoflight off |
 | `F5` | start / stop telemetry recording |
 | `[` `]` | chase camera closer and further |
+| `K` | padlock camera on and off (air combat; keeps the bandit in frame) |
 | `C` | **flight traces** — speed, altitude, g, alpha, V/S, N1 over time |
 | `,` `.` | shorter and longer trace window |
 | `P` `H` `R` `ESC` | pause, help, restart, back to setup |
@@ -272,6 +273,51 @@ The fighter package models the **airframe only** — mass, aerodynamics,
 propulsion, structure and handling. It carries no weapon, sensor, targeting or
 mission system. External stores appear solely as the mass and parasite drag of
 a loaded pylon, because that is the part which changes how the aircraft flies.
+The air-combat mode below does not change that: it scores *flying*, not
+shooting.
+
+---
+
+## Air combat
+
+Pick an **Engagement** on the pre-flight screen — available for the fighter
+from an airborne start — and a second AeroFalcon-X appears, flying the same
+flight model through the same weather over the same terrain, flown by an
+adversary pilot.
+
+| Setup | What it teaches |
+|---|---|
+| Neutral merge | line abreast, equal energy — earning a position |
+| Offensive perch | 900 m astern and 250 m above — converting one |
+| Defensive perch | the bandit has the perch — surviving one |
+| Head-on pass | nose to nose at 6 km — the merge itself |
+
+Four adversary skill levels, from novice to ace. Skill is **not** a
+performance cheat: every level flies the same airframe inside the same limits
+and drives the same stick, rudder and throttle a player does. What changes is
+the pilot — reaction time, decision rate, precision, and how often it picks
+the energy-correct manoeuvre instead of simply pointing at you.
+
+The bandit flies the standard manoeuvres — the three pursuit curves, high and
+low yo-yos, break turns, scissors and extensions — and chooses between them on
+range, angle and above all energy. The HUD shows what it picked and why, so an
+opponent that merely behaves becomes one you can read.
+
+**Scoring is tracking time**, not kills. There is no weapon anywhere in this
+simulator. What is measured is how long each aircraft holds the other inside a
+cone off its nose, in a range band, with the line of sight slow enough to hold
+a pipper on — which is how air-combat training is actually assessed. Two
+seconds unbroken counts as decisive. `docs/known_limitations.md` §15 states
+exactly what that envelope is and is not.
+
+Press `K` to toggle the **padlock camera**, which keeps both aircraft in frame.
+A turning fight spends most of its time with the opponent well off the nose,
+and a camera locked to your own tail shows empty sky while everything that
+matters happens out of shot.
+
+`docs/air_combat.md` has the geometry, the manoeuvres, the control laws, and
+the four specific bugs whose symptoms are worth recognising if you write
+something like this yourself.
 
 ### Cross-validated figures
 
@@ -360,8 +406,13 @@ aerosim/
 │   └── fdm.py              force assembly and integration
 ├── control/
 │   ├── actuators.py        rate/position limits, jam, runaway, reduced authority
+│   ├── dampers.py          washed-out yaw damper: damps the mode, not the turn
 │   ├── autopilot.py        mode state machine, cascaded control laws
 │   └── autoflight.py       phase machine: take-off, climb, autoland, go-around
+├── combat/
+│   ├── geometry.py         range, closure, AOT, aspect, ATA, specific energy
+│   ├── adversary.py        BFM tactics and the control laws that fly them
+│   └── engagement.py       the second aircraft, the setups, the scoring
 ├── telemetry/
 │   ├── recorder.py         buffered CSV, run manifest, integrity hash
 │   └── replay.py           reads telemetry and feeds nothing back
@@ -374,13 +425,14 @@ aerosim/
 │   ├── effects.py          exhaust plume, contrails, wingtip vortices
 │   ├── instruments.py      PFD, tapes, engine and systems panel
 │   ├── charts.py           strip charts: the flight as a time history
+│   ├── combat_hud.py       gunsight, target box, lead pipper, BFM readout
 │   └── app.py              the game loop
 └── data/aircraft/
     ├── aeroliner_200/      passenger
     └── aerofalcon_x/       war
 ```
 
-Roughly 9 900 lines of source, 2 800 lines of tests, 770 lines of aircraft data.
+Roughly 15 200 lines of source, 4 500 lines of tests, 770 lines of aircraft data.
 
 ### Execution order
 
@@ -462,19 +514,31 @@ change and what the change will cost:
 ```
   Natural modes (linearised about trim)
   -------------------------------------
-     ok  short period damping           +0.404   target +0.300 - +2.000   period 4.4 s
-    LOW  phugoid damping                +0.039   target +0.040 - +1.000   period 87.1 s
-    LOW  dutch roll damping             +0.046   target +0.080 - +1.000   period 5.3 s
-     ok  roll time constant               0.78 s target < 1.40
-     ok  spiral doubling time              999 s target > 20              convergent
+     ok  short period damping           +0.387   target +0.300 - +2.000  period 5.0 s
+    LOW  phugoid damping                +0.030   target +0.040 - +1.000  period 78.7 s
+     ok  dutch roll damping             +0.285   target +0.080 - +1.000  period 5.9 s
+                                                        bare airframe +0.065
+     ok  roll time constant               0.91 s target < 1.40
+     ok  spiral doubling time              999 s target > 20             convergent
 
   Notes
   -----
-   * Dutch-roll damping is 0.05. It will wallow in turbulence. Raise cn_r
-     (fin area or tail arm) or reduce cl_beta (less dihedral or less sweep)
-     -- too much dihedral effect relative to weathercock stability is the
-     usual cause.
+   * The airframe's own dutch roll damps at 0.06, below the 0.08 a
+     specification asks for; the yaw damper takes it to 0.29. That is the
+     normal arrangement for a swept wing and it is worth being deliberate
+     about: with the damper failed this aeroplane is legal to fly and
+     unpleasant to fly, so the failure case is a handling question, not
+     just a dispatch one.
 ```
+
+Two numbers for the dutch roll, deliberately. The airliner carries a washed-
+out **yaw damper**, so the mode the pilot feels is not the mode the airframe
+has, and a report that printed only one of them would be lying about
+whichever it left out. Each mode is re-linearised with the damper's gain
+evaluated *at that mode's own frequency* — a washout is a high-pass filter,
+so it barely touches the spiral (112 s → 94 s) while transforming the dutch
+roll. Reporting one gain for every mode would have the damper appear to fly
+the spiral, which it does not.
 
 The modes come from finite-differencing the same force build-up the simulator
 flies, not from a separate stability matrix — so the flap increments, the
@@ -502,6 +566,7 @@ python -m pytest tests/test_aerosim_game.py -q         # orchestrator, autopilot
 python -m pytest tests/test_aerosim_telemetry.py -q    # recording, integrity, replay
 python -m pytest tests/test_aerosim_autoflight.py -q   # auto take-off, autoland
 python -m pytest tests/test_aerosim_analysis.py -q     # linearised modes, design report
+python -m pytest tests/test_aerosim_combat.py -q       # BFM geometry, yaw damper, adversary
 ```
 
 Tests fall into three deliberately distinct categories:

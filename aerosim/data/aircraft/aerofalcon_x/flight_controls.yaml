@@ -26,3 +26,17 @@ flaps:
 
 speedbrake:
   transit_time: "1.5 s"
+
+# Stability augmentation. The fighter's bare dutch roll sits either side of
+# the 0.08 Level 1 line depending on where you measure it -- 0.075 at 15,000
+# ft and 400 kt, 0.059 at the design report's 20,000 ft -- because a mode is
+# a property of a trim point and not of an aircraft. Either way it is fitted
+# for the tracking task rather than to make the aircraft flyable: a two
+# second wallow is tolerable to ride and ruinous to aim through. Lower gain
+# and a shorter washout than the transport, because the mode is faster and
+# the aircraft is asked to yaw deliberately more often.
+yaw_damper:
+  available: true
+  gain: 0.45
+  washout: "2.5 s"
+  authority: 0.12

@@ -95,6 +95,8 @@ class DesignReport:
     altitude: float
     sections: list[Section] = field(default_factory=list)
     modes: dict[str, Mode] = field(default_factory=dict)
+    #: The same modes with the stability augmentation in the loop, if any.
+    augmented: dict[str, Mode] = field(default_factory=dict)
     remarks: list[str] = field(default_factory=list)
 
     def figures(self) -> list[Figure]:
@@ -202,6 +204,7 @@ def design_report(
     payload_fraction: float = 0.6,
     altitude: float = 6000.0,
     modes: dict[str, Mode] | None = None,
+    augmented: dict[str, Mode] | None = None,
 ) -> DesignReport:
     """Grade a data package against general design practice."""
     aero = AeroModel(model)
@@ -439,27 +442,47 @@ def design_report(
 
     if modes:
         report.modes = modes
-        report.sections.append(_handling_section(modes))
+        report.augmented = augmented or {}
+        report.sections.append(_handling_section(modes, report.augmented))
 
     report.remarks = _remarks(report, aero, propulsion, military)
     return report
 
 
-def _handling_section(modes: dict[str, Mode]) -> Section:
+def _handling_section(
+    modes: dict[str, Mode], augmented: dict[str, Mode] | None = None
+) -> Section:
+    """Grade the aircraft as flown, and say what the airframe does alone.
+
+    Where a stability augmentation system is fitted, the *augmented* number
+    is the one a pilot experiences and therefore the one graded. The bare
+    figure is kept in the note, because an aeroplane that only meets a
+    handling specification with a box switched on is a different design from
+    one that meets it without -- and the difference is the failure case.
+    """
+    augmented = augmented or {}
     section = Section("Natural modes (linearised about trim)")
     for key, mode in modes.items():
+        closed = augmented.get(key, mode)
+        changed = abs(closed.damping - mode.damping) > 0.01 or abs(
+            closed.eigenvalue.real - mode.eigenvalue.real
+        ) > 0.01
+
         target = HANDLING_TARGETS.get(key)
         if target is not None and mode.oscillatory:
             _, low, high = target
+            note = f"period {closed.period:.1f} s"
+            if changed:
+                note += f"   bare airframe {mode.damping:+.3f}"
             section.figures.append(
                 Figure(
-                    f"{mode.name} damping",
-                    mode.damping,
+                    f"{closed.name} damping",
+                    closed.damping,
                     "",
                     low,
                     high,
                     fmt="{:+.3f}",
-                    note=f"period {mode.period:.1f} s",
+                    note=note,
                 )
             )
         elif key == "roll":
@@ -557,13 +580,27 @@ def _remarks(report: DesignReport, aero, propulsion, military: bool) -> list[str
             "longer tail arm raises cm_q, which is the term that damps it."
         )
     dutch = report.modes.get("dutch_roll")
-    if dutch is not None and dutch.damping < 0.08:
-        remarks.append(
-            f"Dutch-roll damping is {dutch.damping:.2f}. It will wallow in "
-            "turbulence. Raise cn_r (fin area or tail arm) or reduce cl_beta "
-            "(less dihedral or less sweep) -- too much dihedral effect "
-            "relative to weathercock stability is the usual cause."
-        )
+    flown = report.augmented.get("dutch_roll", dutch)
+    if dutch is not None and flown is not None:
+        if flown.damping < 0.08:
+            remarks.append(
+                f"Dutch-roll damping is {flown.damping:.2f}. It will wallow in "
+                "turbulence. Raise cn_r (fin area or tail arm) or reduce cl_beta "
+                "(less dihedral or less sweep) -- too much dihedral effect "
+                "relative to weathercock stability is the usual cause. A yaw "
+                "damper is the other answer, and on a swept wing it is usually "
+                "the cheaper one."
+            )
+        elif dutch.damping < 0.08:
+            remarks.append(
+                f"The airframe's own dutch roll damps at {dutch.damping:.2f}, "
+                f"below the 0.08 a specification asks for; the yaw damper takes "
+                f"it to {flown.damping:.2f}. That is the normal arrangement for a "
+                "swept wing and it is worth being deliberate about: with the "
+                "damper failed this aeroplane is legal to fly and unpleasant to "
+                "fly, so the failure case is a handling question, not just a "
+                "dispatch one."
+            )
     spiral = report.modes.get("spiral")
     if spiral is not None and not spiral.stable and spiral.half_life < 20.0:
         remarks.append(
@@ -617,11 +654,18 @@ def format_report(report: DesignReport) -> str:
         lines.append("")
 
     if report.modes:
-        lines.append("  Mode detail")
+        augmented = bool(report.augmented)
+        lines.append("  Mode detail" + ("  (bare airframe)" if augmented else ""))
         lines.append("  -----------")
         for mode in report.modes.values():
             lines.append(f"   {mode.name:<18} {mode.describe()}")
         lines.append("")
+        if augmented:
+            lines.append("  Mode detail  (with stability augmentation)")
+            lines.append("  -----------")
+            for mode in report.augmented.values():
+                lines.append(f"   {mode.name:<18} {mode.describe()}")
+            lines.append("")
 
     lines.append("  Notes")
     lines.append("  -----")

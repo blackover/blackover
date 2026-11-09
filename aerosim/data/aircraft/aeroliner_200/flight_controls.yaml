@@ -26,3 +26,17 @@ flaps:
 
 speedbrake:
   transit_time: "2.5 s"
+
+# Stability augmentation. Not a pilot aid -- an aircraft system, fitted
+# because the airframe's own dutch roll damps at 0.065 (at the design
+# report's 20,000 ft; a mode belongs to a trim point) against a Level 1
+# target of 0.08 and no sensible fin closes that gap.
+#
+# The washout is what makes this a damper rather than a rudder autopilot: it
+# passes the oscillation and blocks the steady yaw rate of a turn, so the
+# system is silent when the aircraft is doing what the pilot asked.
+yaw_damper:
+  available: true
+  gain: 0.75          # normalised rudder per rad/s of transient yaw rate
+  washout: "4.0 s"    # high-pass time constant
+  authority: 0.16     # of full rudder travel, so about 4 degrees

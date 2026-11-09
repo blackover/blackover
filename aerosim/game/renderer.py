@@ -25,9 +25,15 @@ import math
 import numpy as np
 import pygame
 
+from ..core.frames import cross3
 from .sky import Sky, lerp
 
 NEAR_PLANE = 0.35
+
+#: Padlock camera: how much further back it stands at knife-fighting range,
+#: and how far along the line of sight it looks.
+PADLOCK_REACH = 1.8
+PADLOCK_BIAS = 0.42
 
 # Terrain detail: a cascade of square rings, each with cells RING_FACTOR times
 # larger than the ring inside it and hollowed out where that finer ring already
@@ -124,6 +130,63 @@ class Camera:
             state.position + back * self.distance + np.array([0.0, 0.0, -self.height])
         )
         self._look_at(state.position + np.array([0.0, 0.0, -0.05 * self.distance]))
+
+    def padlock(self, state, target_position: np.ndarray, dt: float) -> None:
+        """Chase camera that keeps a second aircraft in frame.
+
+        The camera sits behind the aircraft as usual, but on the side away
+        from the target and looking at a point between the two, so both are
+        on screen at once. This is the view a dogfight is unwatchable
+        without: in a turning fight the opponent spends most of its time
+        well off the nose, and a camera locked to the tail shows an empty
+        sky while everything that matters happens out of frame.
+
+        "Padlocked" is the pilot's term for not letting go of a visual, and
+        the camera does the same thing a pilot's head does -- it keeps the
+        other aircraft in sight and lets the airframe rotate underneath.
+        """
+        separation = target_position - state.position
+        distance = float(np.linalg.norm(separation))
+        if distance < 1.0e-3:
+            self.follow(state, dt)
+            return
+        to_target = separation / distance
+
+        derived = state.derived
+        heading = derived.yaw
+        if self._smoothed_heading is None:
+            self._smoothed_heading = heading
+        else:
+            delta = math.atan2(
+                math.sin(heading - self._smoothed_heading),
+                math.cos(heading - self._smoothed_heading),
+            )
+            self._smoothed_heading += delta * (1.0 - math.exp(-dt / 0.45))
+
+        # Stand off along the aircraft's tail, displaced away from the line
+        # to the target so the target is not hidden behind our own tail.
+        back = np.array(
+            [-math.cos(self._smoothed_heading), -math.sin(self._smoothed_heading), 0.0]
+        )
+        sideways = cross3(to_target, np.array([0.0, 0.0, -1.0]))
+        norm = float(np.linalg.norm(sideways))
+        if norm > 1.0e-6:
+            sideways /= norm
+
+        # Pull the camera back as the target closes, so a gun-range fight
+        # does not fill the screen with one wing.
+        reach = self.distance * (1.0 + PADLOCK_REACH * min(1.0, 900.0 / max(distance, 1.0)))
+        self.position = (
+            state.position
+            + back * reach * 0.55
+            + sideways * reach * 0.75
+            + np.array([0.0, 0.0, -self.height * 1.15])
+        )
+
+        # Look between the two aircraft, weighted toward our own so the
+        # player's aeroplane stays near the middle of the frame.
+        focus = state.position + to_target * min(distance * PADLOCK_BIAS, 260.0)
+        self._look_at(focus)
 
     def _look_at(self, target: np.ndarray) -> None:
         forward = target - self.position

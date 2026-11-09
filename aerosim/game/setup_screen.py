@@ -32,8 +32,11 @@ from ..env.weather import PRECIPITATION, RUNWAY_STATES
 from ..env.wind import TURBULENCE_PRESETS
 from .config import (
     DATA_ROOT,
+    ENGAGEMENT_LABELS,
     FAILURE_LABELS,
+    SKILL_LABELS,
     START_MODE_LABELS,
+    Engagement,
     FailureMode,
     SimConditions,
     StartMode,
@@ -108,6 +111,16 @@ def build_settings() -> list[tuple[str, list[Setting]]]:
     # so the arrow keys walk a scale rather than a hash table.
     precipitation_types = ["none", "drizzle", "rain", "heavy_rain", "snow", "heavy_snow"]
     runway_states = ["dry", "damp", "wet", "standing_water", "snow", "ice"]
+    # Engagements ordered from neutral outward: the merge first, then the two
+    # perches, then the head-on pass.
+    engagements = [
+        Engagement.NONE,
+        Engagement.NEUTRAL,
+        Engagement.OFFENSIVE,
+        Engagement.DEFENSIVE,
+        Engagement.HEAD_ON,
+    ]
+    skills = ["novice", "regular", "veteran", "ace"]
     assert set(precipitation_types) == set(PRECIPITATION)
     assert set(runway_states) == set(RUNWAY_STATES)
     assert set(terrain_profiles) == set(TERRAIN_PROFILES)
@@ -308,6 +321,31 @@ def build_settings() -> list[tuple[str, list[Setting]]]:
                         c, "runway_state", _cycle(runway_states, c.runway_state, d)
                     ),
                     note="changes the take-off roll and the landing roll",
+                ),
+            ],
+        ),
+        (
+            "AIR COMBAT",
+            [
+                Setting(
+                    "Engagement",
+                    lambda c: ENGAGEMENT_LABELS[c.engagement]
+                    if c.engagement_available
+                    else "needs the fighter, airborne start",
+                    lambda c, d, f: setattr(
+                        c, "engagement", _cycle(engagements, c.engagement, d)
+                    ),
+                    enabled=lambda c: c.engagement_available,
+                    note="a second fighter, same flight model",
+                ),
+                Setting(
+                    "Adversary",
+                    lambda c: SKILL_LABELS[c.adversary_skill],
+                    lambda c, d, f: setattr(
+                        c, "adversary_skill", _cycle(skills, c.adversary_skill, d)
+                    ),
+                    enabled=lambda c: c.fighting,
+                    note="how well it flies, not what it flies",
                 ),
             ],
         ),

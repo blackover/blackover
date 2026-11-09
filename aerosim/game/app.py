@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pygame
 
+from ..combat import Engagement
 from ..core.clock import FrameAccumulator
 from ..core.frames import dcm_body_to_ned
 from ..core.model_package import PackageError, load_aircraft
@@ -22,6 +24,7 @@ from ..core.orchestrator import Simulation
 from ..core.units import to_ft, to_kt
 from ..telemetry.recorder import TelemetryRecorder, default_run_dir
 from .charts import FlightCharts
+from .combat_hud import CombatHud
 from .config import DATA_ROOT, SimConditions
 from .effects import Effects, PrecipitationField
 from .instruments import (
@@ -30,6 +33,7 @@ from .instruments import (
     DIM,
     GREEN,
     MAGENTA,
+    PANEL_EDGE,
     RED,
     WHITE,
     Fonts,
@@ -53,7 +57,6 @@ HELP_LINES = [
     ("G", "landing gear up and down"),
     ("F / V", "flaps extend and retract"),
     ("B", "wheel brakes (hold)"),
-    ("I", "anti-ice on and off  (sheds airframe ice)"),
     ("I", "anti-ice on and off  (sheds airframe ice, costs a little thrust)"),
     ("SPACE", "speedbrake"),
     ("1 / 2 / 3", "autopilot: altitude hold, heading hold, speed hold"),
@@ -62,6 +65,7 @@ HELP_LINES = [
     ("0", "autopilot and autoflight off"),
     ("F5", "start and stop telemetry recording"),
     ("[ / ]", "chase camera closer and further"),
+    ("K", "padlock camera on and off  (keeps the bandit in frame)"),
     ("C", "flight traces  -- speed, altitude, g, alpha, V/S, N1"),
     (", / .", "shorter and longer trace window"),
     ("P", "pause"),
@@ -110,6 +114,9 @@ class Game:
         self.show_help = False
         self.show_charts = False
         self.recorder: TelemetryRecorder | None = None
+        self.engagement = None
+        self.combat_hud = None
+        self.padlock = False
         self.record_from_start = False
         self.last_run_dir = None
 
@@ -146,6 +153,10 @@ class Game:
         mesh = build_mesh(model)
         self._shadow_mesh = shadow_outline(model)
         self._effects = Effects(model)
+        # The bandit gets its own: trails and exhaust carry per-aircraft
+        # history, and sharing one would smear both aeroplanes' contrails
+        # into a single ribbon between them.
+        self._bandit_effects = Effects(model)
         self._precipitation = PrecipitationField(self.conditions.seed)
         self._charts = FlightCharts(model, self.fonts)
 
@@ -165,6 +176,26 @@ class Game:
             heading=self.conditions.heading,
             elevation=self.conditions.field_elevation,
         )
+
+        # The fight, if there is one. The bandit flies the same model package
+        # as the player, so it has exactly the same aeroplane -- no opponent
+        # with a secretly better wing.
+        self.engagement = None
+        self.combat_hud = None
+        if self.conditions.fighting:
+            self.engagement = Engagement(
+                sim,
+                self.conditions,
+                setup=self.conditions.engagement,
+                skill=self.conditions.adversary_skill,
+            )
+            self.combat_hud = CombatHud(self.fonts)
+            self.padlock = True
+            sim.log(
+                "INFO",
+                f"engagement: {self.conditions.engagement}, "
+                f"{self.conditions.adversary_skill} adversary",
+            )
         return model, sim, renderer, mesh, runway
 
     def fly(self) -> bool:
@@ -209,6 +240,13 @@ class Game:
 
             for _ in range(accumulator.add(wall_dt)):
                 sim.step()
+                # The bandit is stepped inside the same fixed-step loop, from
+                # the same accumulator, so both aircraft advance on one clock.
+                # Stepping it per frame instead would make the fight depend on
+                # the frame rate, and a bandit that turns faster on a fast
+                # machine is not an opponent, it is a bug.
+                if self.engagement is not None and not sim.paused:
+                    self.engagement.step(sim, sim.clock.dt)
                 if self.recorder is not None:
                     self.recorder.sample(sim)
                 if sim.crashed:
@@ -283,6 +321,13 @@ class Game:
         elif key == pygame.K_f:
             pilot.flap = min(1.0, round(pilot.flap * 4 + 1) / 4)
             sim.log("INFO", f"flaps {pilot.flap * 100:.0f}%")
+        elif key == pygame.K_k:
+            if self.engagement is not None:
+                self.padlock = not self.padlock
+                sim.log(
+                    "INFO",
+                    f"padlock camera {'on' if self.padlock else 'off'}",
+                )
         elif key == pygame.K_v:
             pilot.flap = max(0.0, round(pilot.flap * 4 - 1) / 4)
             sim.log("INFO", f"flaps {pilot.flap * 100:.0f}%")
@@ -357,7 +402,13 @@ class Game:
         renderer.resize_view(view)
 
         state = sim.fdm.state
-        renderer.camera.follow(state, dt)
+        bandit_state = (
+            self.engagement.bandit.fdm.state if self.engagement is not None else None
+        )
+        if bandit_state is not None and self.padlock:
+            renderer.camera.padlock(state, bandit_state.position, dt)
+        else:
+            renderer.camera.follow(state, dt)
 
         # Visibility and the cloud deck come from the weather, and change with
         # altitude: an aircraft climbing through an overcast goes from clear,
@@ -389,11 +440,44 @@ class Game:
         # a contrail five kilometres back must not be painted over the tail.
         self._effects.update(state, sim)
         self._effects.draw_trails(renderer)
-        renderer.draw_aircraft(state, self._facets, dcm)
-        self._effects.draw_exhaust(renderer, state, sim)
+
+        # Both aircraft, far one first. The painter's algorithm inside
+        # draw_aircraft sorts facets within one mesh but knows nothing about
+        # the other aeroplane, so the order of the two calls is what decides
+        # which occludes which -- and at gun range they do overlap.
+        if bandit_state is not None and not in_cloud:
+            bandit_sim = self.engagement.bandit
+            bandit_dcm = dcm_body_to_ned(bandit_state.quaternion)
+            renderer.draw_shadow(
+                bandit_state, self._shadow_mesh, bandit_dcm, sim.terrain
+            )
+            own_depth = float(
+                np.linalg.norm(state.position - renderer.camera.position)
+            )
+            bandit_depth = float(
+                np.linalg.norm(bandit_state.position - renderer.camera.position)
+            )
+            self._bandit_effects.update(bandit_state, bandit_sim)
+            self._bandit_effects.draw_trails(renderer)
+            if bandit_depth > own_depth:
+                renderer.draw_aircraft(bandit_state, self._facets, bandit_dcm)
+                self._bandit_effects.draw_exhaust(renderer, bandit_state, bandit_sim)
+                renderer.draw_aircraft(state, self._facets, dcm)
+                self._effects.draw_exhaust(renderer, state, sim)
+            else:
+                renderer.draw_aircraft(state, self._facets, dcm)
+                self._effects.draw_exhaust(renderer, state, sim)
+                renderer.draw_aircraft(bandit_state, self._facets, bandit_dcm)
+                self._bandit_effects.draw_exhaust(renderer, bandit_state, bandit_sim)
+        else:
+            renderer.draw_aircraft(state, self._facets, dcm)
+            self._effects.draw_exhaust(renderer, state, sim)
         self._precipitation.draw(renderer, state, sim.weather, sim)
 
         self.surface.set_clip(previous_clip)
+
+        if self.combat_hud is not None:
+            self.combat_hud.draw(self.surface, renderer, view, state, self.engagement)
 
         self._draw_hud(sim, view)
         panel.draw(self.surface, sim)
@@ -405,6 +489,11 @@ class Game:
             self._charts.draw_compact(self.surface, panel.chart_rect)
 
         self._draw_messages(sim, view)
+
+        if self.combat_hud is not None:
+            self.combat_hud.draw_score(self.surface, view, self.engagement.state)
+            if self.engagement.state.finished:
+                self._draw_debrief(view)
 
         if self.show_charts:
             self._charts.draw_overlay(self.surface, view)
@@ -573,6 +662,41 @@ class Game:
             draw_text(
                 surface, self.fonts.small, subtitle, (view.centerx, rect.bottom + 16), DIM, "center"
             )
+
+    def _draw_debrief(self, view) -> None:
+        """The fight's debrief, over the view, once it has ended.
+
+        The same lines the headless engagement prints, so what the game says
+        about a fight and what a test says about it cannot drift apart.
+        """
+        lines = self.engagement.debrief()
+        width = max(self.fonts.small.size(line)[0] for line in lines) + 56
+        height = len(lines) * 20 + 44
+        rect = pygame.Rect(0, 0, width, height)
+        rect.center = (view.centerx, view.centery)
+
+        backdrop = pygame.Surface(rect.size, pygame.SRCALPHA)
+        backdrop.fill((10, 10, 14, 225))
+        pygame.draw.rect(backdrop, PANEL_EDGE, backdrop.get_rect(), 1)
+        self.surface.blit(backdrop, rect)
+
+        y = rect.top + 16
+        for line in lines:
+            colour = WHITE
+            if line.startswith("Result:"):
+                colour = GREEN if "you held" in line or "you had" in line else AMBER
+            elif line.startswith(("you", "bandit")):
+                colour = CYAN
+            draw_text(self.surface, self.fonts.small, line, (rect.left + 24, y), colour)
+            y += 20
+        draw_text(
+            self.surface,
+            self.fonts.small,
+            "R to fly it again, ESC for setup",
+            (rect.centerx, rect.bottom - 18),
+            DIM,
+            "midbottom",
+        )
 
     # -- replay ------------------------------------------------------------
 

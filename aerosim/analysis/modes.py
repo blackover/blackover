@@ -21,7 +21,8 @@ roll in the same frequency band with nothing to tell them apart.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import Callable
 
 import numpy as np
 
@@ -123,12 +124,24 @@ def _full_to_reduced_rate(z: np.ndarray, dx: np.ndarray) -> np.ndarray:
     return dz
 
 
-def linearise(fdm, controls: Controls | None = None) -> tuple[np.ndarray, np.ndarray]:
+def linearise(
+    fdm,
+    controls: Controls | None = None,
+    augmentation: Callable[[np.ndarray, Controls], Controls] | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """Numerical Jacobian about the current state.
 
     Returns ``(A, z0)``: the 9x9 system matrix of the reduced state and the
     reduced state it was taken at. The aircraft is assumed to be at or near
     trim -- the caller's job, not this function's.
+
+    ``augmentation`` closes a stability-augmentation loop around the bare
+    airframe: given a perturbed state and the trim controls, it returns the
+    controls the system would actually command. With it the eigenvalues
+    describe the aircraft as flown; without it they describe the airframe
+    alone. Both are worth knowing and they are different numbers -- a
+    swept-wing jet's dutch roll is the standard case where the airframe fails
+    a handling specification and the aeroplane passes it.
     """
     if controls is None:
         controls = fdm.controls
@@ -158,7 +171,8 @@ def linearise(fdm, controls: Controls | None = None) -> tuple[np.ndarray, np.nda
         # the phugoid's altitude coupling appear at all.
         air = fdm.atmosphere.sample(float(z[8]))
         x = _reduced_to_full(z, yaw)
-        force, moment, _ = fdm._forces(x, controls, air, mass_properties, cg)
+        applied = controls if augmentation is None else augmentation(z, controls)
+        force, moment, _ = fdm._forces(x, applied, air, mass_properties, cg)
         dx = state_derivative(
             x,
             force,
@@ -193,7 +207,11 @@ def _classify(eigenvalue: complex, name: str) -> Mode:
     return Mode(name, eigenvalue, 0.0, 1.0 if real < 0.0 else -1.0, time_constant)
 
 
-def natural_modes(fdm, controls: Controls | None = None) -> dict[str, Mode]:
+def natural_modes(
+    fdm,
+    controls: Controls | None = None,
+    augmentation: Callable[[np.ndarray, Controls], Controls] | None = None,
+) -> dict[str, Mode]:
     """The five classical modes, named.
 
     Named by their place in the ordered eigenvalues of each block rather than
@@ -202,7 +220,7 @@ def natural_modes(fdm, controls: Controls | None = None) -> dict[str, Mode]:
     mislabels both on any aircraft whose numbers are unusual -- which is
     exactly the aircraft a designer wants the report for.
     """
-    matrix, _ = linearise(fdm, controls)
+    matrix, _ = linearise(fdm, controls, augmentation)
     modes: dict[str, Mode] = {}
 
     longitudinal = np.linalg.eigvals(matrix[np.ix_(LONGITUDINAL, LONGITUDINAL)])
@@ -234,3 +252,63 @@ def natural_modes(fdm, controls: Controls | None = None) -> dict[str, Mode]:
 def _complex_pairs(eigenvalues) -> list[complex]:
     """One representative -- the positive-imaginary half -- of each pair."""
     return [complex(value) for value in eigenvalues if value.imag > 1.0e-9]
+
+
+def yaw_damper_augmentation(
+    damper, frequency: float
+) -> Callable[[np.ndarray, Controls], Controls]:
+    """Close the yaw damper's loop for the linearisation.
+
+    The damper is a filter and a linearisation wants a gain, so it is
+    evaluated at one frequency -- the frequency of the mode being measured.
+    For the dutch roll the washout is nearly transparent there, so this is
+    close to the full gain; at the rate of a steady turn it would be close to
+    zero, which is the behaviour that makes it a damper.
+
+    The authority limit is deliberately *not* applied. A linearisation
+    describes small perturbations, and a damper that is against its stops is
+    not in the linear region -- reporting a damping ratio that silently
+    assumed saturation would be worse than reporting the unsaturated one and
+    saying so.
+    """
+    gain = damper.equivalent_gain(frequency)
+
+    def augment(z: np.ndarray, controls: Controls) -> Controls:
+        # z[5] is the yaw rate; positive is nose right and the rudder that
+        # opposes it is positive in this codebase's sign convention.
+        return replace(controls, rudder=controls.rudder + gain * float(z[5]))
+
+    return augment
+
+
+def augmented_modes(fdm, damper, controls: Controls | None = None) -> dict[str, Mode]:
+    """The modes with the stability augmentation in the loop.
+
+    Each mode is re-linearised with the damper's gain evaluated at *its own*
+    frequency, not at one frequency for all of them. That matters because the
+    washout is the whole point of the system: at the dutch roll it passes
+    almost everything, and at the spiral -- a yaw rate of a fraction of a
+    degree per second held for minutes -- it passes almost nothing. Using the
+    dutch-roll gain throughout reports a spiral the damper is flying, which
+    it is not.
+
+    This is a describing-function argument and it holds because the loop is
+    linear apart from the authority limit, which a small perturbation does
+    not reach.
+    """
+    bare = natural_modes(fdm, controls)
+    if damper is None or not getattr(damper, "active", False):
+        return bare
+
+    out: dict[str, Mode] = {}
+    for key, mode in bare.items():
+        # A non-oscillatory root has no frequency of its own; use the
+        # reciprocal of its time constant, which is where its energy is.
+        frequency = mode.frequency if mode.oscillatory else 1.0 / max(
+            abs(mode.time_constant), 1.0e-6
+        )
+        closed = natural_modes(
+            fdm, controls, yaw_damper_augmentation(damper, frequency)
+        )
+        out[key] = closed.get(key, mode)
+    return out
