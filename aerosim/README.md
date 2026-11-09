@@ -419,9 +419,9 @@ aerosim/
 ├── game/
 │   ├── config.py           the pre-flight conditions object
 │   ├── setup_screen.py     condition entry and live briefing
-│   ├── mesh.py             aircraft geometry, built from the data package
+│   ├── mesh.py             lofted aerofoils and bodies, from the data package
 │   ├── sky.py              sun, gradient, haze, cloud field
-│   ├── renderer.py         chase camera, clipping, terrain LOD, runway
+│   ├── renderer.py         chase and padlock cameras, clipping, LOD, lighting
 │   ├── effects.py          exhaust plume, contrails, wingtip vortices
 │   ├── instruments.py      PFD, tapes, engine and systems panel
 │   ├── charts.py           strip charts: the flight as a time history

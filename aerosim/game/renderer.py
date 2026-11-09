@@ -25,15 +25,36 @@ import math
 import numpy as np
 import pygame
 
-from ..core.frames import cross3
+
 from .sky import Sky, lerp
 
 NEAR_PLANE = 0.35
 
+#: Surface response, as (sky pickup, specular strength, specular tightness).
+#: Sky pickup is extra light a facet gathers from the dome above it, which
+#: is what separates a polished surface from a matte one even out of the
+#: sun; strength and tightness shape the highlight.
+MATERIALS = {
+    "paint": (0.06, 0.40, 22.0),
+    "metal": (0.16, 0.95, 48.0),
+    "glass": (0.10, 1.60, 90.0),
+    "matte": (0.00, 0.04, 6.0),
+}
+
+#: How much of the ambient a downward-facing surface still receives, as a
+#: fraction. Not zero: the ground throws light back up, and an underside
+#: rendered black reads as a hole rather than a shadow.
+GROUND_BOUNCE = 0.45
+
 #: Padlock camera: how much further back it stands at knife-fighting range,
 #: and how far along the line of sight it looks.
-PADLOCK_REACH = 1.8
-PADLOCK_BIAS = 0.42
+PADLOCK_REACH = 0.9
+PADLOCK_BIAS = 0.30
+#: How far up the line of sight the camera may look, as a multiple of its
+#: own standoff from the aircraft.
+PADLOCK_LEAD_SPAN = 0.9
+#: Range below which the camera starts easing back, metres.
+PADLOCK_CLOSE = 400.0
 
 # Terrain detail: a cascade of square rings, each with cells RING_FACTOR times
 # larger than the ring inside it and hollowed out where that finer ring already
@@ -163,29 +184,40 @@ class Camera:
             )
             self._smoothed_heading += delta * (1.0 - math.exp(-dt / 0.45))
 
-        # Stand off along the aircraft's tail, displaced away from the line
-        # to the target so the target is not hidden behind our own tail.
+        # Stand on the OPPOSITE side from the bandit, somewhat behind. Both
+        # aircraft are then on the far side of the camera, so the bandit
+        # appears beyond the player rather than past the edge of the frame,
+        # and neither hides the other.
         back = np.array(
             [-math.cos(self._smoothed_heading), -math.sin(self._smoothed_heading), 0.0]
         )
-        sideways = cross3(to_target, np.array([0.0, 0.0, -1.0]))
-        norm = float(np.linalg.norm(sideways))
-        if norm > 1.0e-6:
-            sideways /= norm
+        away = -to_target.copy()
+        away[2] = 0.0
+        norm = float(np.linalg.norm(away))
+        away = back if norm < 1.0e-6 else away / norm
 
-        # Pull the camera back as the target closes, so a gun-range fight
-        # does not fill the screen with one wing.
-        reach = self.distance * (1.0 + PADLOCK_REACH * min(1.0, 900.0 / max(distance, 1.0)))
+        stand = back * 0.65 + away * 0.75
+        norm = float(np.linalg.norm(stand))
+        stand = back if norm < 1.0e-6 else stand / norm
+
+        # Ease back a little when the bandit is genuinely close, so a
+        # gun-range pass does not fill the screen with one wing. Only when
+        # it is close: a boost that applies at any range under a kilometre
+        # is a boost that always applies, and it pushes the camera so far
+        # out that the player's own aeroplane leaves the shot.
+        squeeze = max(0.0, 1.0 - distance / PADLOCK_CLOSE)
+        reach = self.distance * (1.0 + PADLOCK_REACH * squeeze)
         self.position = (
             state.position
-            + back * reach * 0.55
-            + sideways * reach * 0.75
+            + stand * reach
             + np.array([0.0, 0.0, -self.height * 1.15])
         )
 
-        # Look between the two aircraft, weighted toward our own so the
-        # player's aeroplane stays near the middle of the frame.
-        focus = state.position + to_target * min(distance * PADLOCK_BIAS, 260.0)
+        # Look just past our own aircraft toward the bandit: enough bias to
+        # give the bandit's side of the frame more room, not so much that
+        # the player slides out of it.
+        lead = min(distance * PADLOCK_BIAS, reach * PADLOCK_LEAD_SPAN)
+        focus = state.position + to_target * lead
         self._look_at(focus)
 
     def _look_at(self, target: np.ndarray) -> None:
@@ -712,7 +744,17 @@ class Renderer:
         # of a hundred and twenty-six dataclasses every frame is not free.
         colours = np.array([f.colour for f in facets], dtype=float)
         highlight = np.array([bool(f.highlight) for f in facets])
-        self._mesh_cache[key] = (facets, (points, bounds, colours, highlight))
+        # Material response, resolved here rather than per frame: how much
+        # sky a facet picks up, how bright its highlight is, and how tight.
+        finish = np.array(
+            [MATERIALS.get(getattr(f, "material", "paint"), MATERIALS["paint"])
+             for f in facets],
+            dtype=float,
+        )
+        solid = np.array([bool(getattr(f, "solid", False)) for f in facets])
+        self._mesh_cache[key] = (
+            facets, (points, bounds, colours, highlight, finish, solid)
+        )
         return self._mesh_cache[key][1]
 
     def alpha_layer(self, name: str = "shadow") -> pygame.Surface:
@@ -811,7 +853,7 @@ class Renderer:
             return
 
         camera = self.camera
-        points, bounds, base, highlight = self._mesh_buffer(facets)
+        points, bounds, base, highlight, finish, solid = self._mesh_buffer(facets)
         starts, ends = bounds[:-1], bounds[1:]
 
         world_all = state.position + points @ dcm_body_to_ned.T
@@ -833,26 +875,53 @@ class Renderer:
         degenerate = lengths < 1.0e-9
         normals /= np.where(degenerate, 1.0, lengths)[:, None]
 
-        # Face each normal toward the camera so both sides of a thin surface
-        # such as a fin are lit rather than one of them going black.
+        # A facet of a closed body that faces away from the camera is behind
+        # the rest of the body and will be painted over, so computing its
+        # shading and handing it to pygame is pure waste -- and on a solid
+        # that is about half of them. Open shells are kept two-sided: a
+        # canopy or a flat panel has no inside to hide, and culling one
+        # would punch a hole in the aeroplane.
         view = camera.position - anchor
-        normals = np.where(
-            ((normals * view).sum(axis=1) < 0.0)[:, None], -normals, normals
-        )
+        facing = (normals * view).sum(axis=1)
+        backface = solid & (facing < 0.0)
+
+        # For what survives, face each normal toward the camera so both
+        # sides of a thin two-sided surface are lit rather than one of them
+        # going black.
+        normals = np.where((facing < 0.0)[:, None], -normals, normals)
 
         sun = self.sky.sun_ned
         ambient = self.sky.ambient
         lit = -(normals @ sun)
-        level = np.minimum(1.25, ambient + (1.0 - ambient) * np.maximum(0.0, lit))
 
-        # A narrow specular lobe about the half vector. Flat Lambert on flat
-        # facets makes an aircraft look like paper; one highlight term is what
-        # makes it look like a surface.
+        # Hemispheric ambient rather than a single flat term. The sky is a
+        # bright dome and the ground is a dim reflector, so a face tilted up
+        # is lit differently from one tilted down even where the sun does not
+        # reach it. A constant ambient makes every shadowed facet the same
+        # value, which is exactly what flattens a curved surface back into a
+        # silhouette -- the whole point of lofting the fuselage is lost if
+        # the shading does not vary across it.
+        upwards = -normals[:, 2]  # z is down, so this is +1 facing the sky
+        sky_fraction = 0.5 * (1.0 + upwards)
+        ambient_level = ambient * (
+            GROUND_BOUNCE + (1.0 - GROUND_BOUNCE) * sky_fraction
+        )
+        level = np.minimum(
+            1.25, ambient_level + (1.0 - ambient) * np.maximum(0.0, lit)
+        )
+
+        # A specular lobe about the half vector, with each material given its
+        # own strength and tightness. Flat Lambert on flat facets makes an
+        # aircraft look like paper; a canopy, a bare metal nozzle and a
+        # painted wing catching the sun differently is what makes it read as
+        # a built object.
         view_length = np.linalg.norm(view, axis=1)
         half = view / np.maximum(view_length, 1.0e-6)[:, None] - sun
         half_length = np.maximum(np.linalg.norm(half, axis=1), 1.0e-6)
         cosine = np.maximum(0.0, (normals * half).sum(axis=1) / half_length)
-        level += 0.55 * cosine**24 * self.sky.daylight * (lit > 0.0)
+        sky_pickup, strength, tightness = finish[:, 0], finish[:, 1], finish[:, 2]
+        level += sky_pickup * ambient * sky_fraction
+        level += strength * cosine**tightness * self.sky.daylight * (lit > 0.0)
 
         shaded = np.minimum(255.0, base * level[:, None])
         shaded = self.sky.haze_array(shaded, np.maximum(depth, 1.0))
@@ -872,7 +941,7 @@ class Renderer:
         offscreen = (xmax < left) | (xmin > right) | (ymax < top) | (ymin > bottom)
         clipped = (xmin < left) | (xmax > right) | (ymin < top) | (ymax > bottom)
 
-        drawable = visible & ~degenerate & ~(offscreen & ~straddles)
+        drawable = visible & ~degenerate & ~backface & ~(offscreen & ~straddles)
         order = np.argsort(-depth)
         surface = self.surface
 

@@ -361,6 +361,28 @@ not have.
 that could alter the aircraft's path would be a second, undocumented force
 model. This is tested.
 
+**The aircraft models are shapes, not surfaces.** Each is a few hundred flat
+facets lofted from the numbers in `geometry.yaml`: superelliptic fuselage
+sections, lifting surfaces with a NACA thickness distribution, a glazed
+canopy, a petalled nozzle. Dimensioned to the data, including the tail areas
+— enlarging a fin to fix a handling problem enlarges the drawn fin — but
+there are no panel lines, no rivets, no markings, no moving control
+surfaces, no texture of any kind, and no smooth shading: every facet is a
+single flat colour, so curvature reads as a gradient of steps rather than
+as a curve.
+
+The drawn planform of a chined wing is larger than `wing_area`, which is the
+trapezoidal *reference* area the aerodynamic coefficients are normalised
+against. That is the usual convention for such a wing rather than a
+discrepancy between the picture and the physics.
+
+**Lighting is three terms and no shadows.** A hemispheric ambient, one
+Lambert term from the sun, and a specular lobe whose strength and tightness
+come from a per-facet material. There is no shadowing of one part of the
+aircraft by another, no reflection of the sky or ground beyond that ambient
+split, and no global illumination. An aircraft drawn against the sun is lit
+as though its own fuselage were transparent.
+
 ---
 
 ## 13. Weather

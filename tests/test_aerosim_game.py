@@ -1011,6 +1011,124 @@ class TestMeshGeometry:
             assert points[:, 0].min() - 0.5 <= position[0] <= points[:, 0].max()
             assert points[:, 1].min() - 0.5 <= position[1] <= points[:, 1].max() + 0.5
 
+    @staticmethod
+    def _inward(facets):
+        """Facets whose winding normal points at their own group's centre."""
+        centre = np.concatenate([f.points for f in facets], axis=0).mean(axis=0)
+        bad = []
+        for facet in facets:
+            points = facet.points
+            normal = np.cross(points[1] - points[0], points[2] - points[0])
+            length = float(np.linalg.norm(normal))
+            if length < 1.0e-12:
+                continue
+            if float(normal @ (points.mean(axis=0) - centre)) / length < 0.0:
+                bad.append(points.mean(axis=0))
+        return bad
+
+    def test_the_solid_primitives_are_wound_outward(self):
+        """The invariant backface culling rests on.
+
+        The renderer discards a facet marked ``solid`` when its winding
+        normal points away from the camera, which is only safe if every
+        such facet is wound outward. One wound the other way is culled when
+        it should be drawn, and the aeroplane gets a hole that appears from
+        one angle and not another -- a fault that survives a screenshot and
+        shows up in flight.
+
+        Checked on the two builders that mark their output solid, each
+        against its own centre. Against the whole aircraft's centre it would
+        be the wrong question: a wing root facet legitimately faces back
+        toward the fuselage, and the thing that must be consistent is the
+        body it belongs to, not the aeroplane.
+        """
+        from aerosim.game.mesh import _lofted_body, _wing_solid
+
+        body = _lofted_body(
+            [
+                (2.0, 0.50, 0.40, 0.0, 2.5),
+                (0.0, 0.80, 0.60, 0.05, 3.0),
+                (-2.0, 0.60, 0.50, 0.0, 2.5),
+            ],
+            (120, 120, 120),
+            segments=10,
+        )
+        assert all(f.solid for f in body)
+        assert not self._inward(body)
+
+        wing = _wing_solid(
+            [
+                (1.0, -1.0, 0.5, 0.0, 0.12),
+                (0.6, -0.9, 2.0, -0.1, 0.11),
+                (0.3, -0.8, 3.2, -0.2, 0.09),
+            ],
+            (120, 120, 120),
+        )
+        assert all(f.solid for f in wing)
+        assert not self._inward(wing)
+
+    def test_mirroring_and_offsetting_keep_the_winding(self):
+        """Because the left wing is the right wing, reflected.
+
+        A reflection flips handedness, so a mirrored polygon is wound
+        backwards unless its vertex order is reversed too. Getting that
+        wrong culls one entire wing and leaves the other, which looks like
+        a modelling mistake rather than a sign error.
+        """
+        from aerosim.game.mesh import _mirror_y, _offset, _wing_solid
+
+        wing = _wing_solid(
+            [(1.0, -1.0, 0.5, 0.0, 0.12), (0.6, -0.9, 2.4, 0.0, 0.10)],
+            (120, 120, 120),
+        )
+        assert not self._inward(_mirror_y(wing))
+        assert not self._inward(_offset(wing, (3.0, -1.0, 2.0)))
+        assert all(f.solid for f in _mirror_y(wing))
+        assert all(f.solid for f in _offset(wing, (1.0, 0.0, 0.0)))
+
+    @pytest.mark.parametrize("aircraft", ["aeroliner_200", "aerofalcon_x"])
+    def test_most_of_the_aircraft_is_cullable(self, aircraft):
+        """Culling only pays if the bulk of the mesh is closed geometry."""
+        from aerosim.core.model_package import load_aircraft
+        from aerosim.game.config import DATA_ROOT
+        from aerosim.game.mesh import build_mesh
+
+        facets = build_mesh(load_aircraft(DATA_ROOT / aircraft))
+        solid = sum(1 for f in facets if f.solid)
+        assert solid / len(facets) > 0.6
+
+    @pytest.mark.parametrize("aircraft", ["aeroliner_200", "aerofalcon_x"])
+    def test_lifting_surfaces_have_thickness(self, aircraft):
+        """A wing drawn as a flat polygon reads as paper.
+
+        Checked at the span stations where the wing is, rather than over the
+        whole aircraft: a fuselage has depth whatever the wings are made of,
+        so a mesh-wide bounding box would pass with flat wings bolted to it.
+        """
+        from aerosim.core.model_package import load_aircraft
+        from aerosim.game.config import DATA_ROOT
+        from aerosim.game.mesh import build_mesh
+
+        model = load_aircraft(DATA_ROOT / aircraft)
+        half_span = 0.5 * model.get("geometry", "wing_span")
+        radius = 0.5 * model.get("geometry", "fuselage_diameter")
+
+        points = np.concatenate(
+            [f.points for f in build_mesh(model)], axis=0
+        )
+        # Outboard of the fuselage and inboard of the tip, where the only
+        # thing present is wing.
+        band = points[
+            (np.abs(points[:, 1]) > radius * 1.8)
+            & (np.abs(points[:, 1]) < half_span * 0.92)
+        ]
+        assert len(band) > 0
+        thickness = band[:, 2].max() - band[:, 2].min()
+        assert thickness > 0.05 * half_span * 0.05, (
+            f"wing band spans only {thickness:.3f} m vertically -- flat"
+        )
+        assert thickness > 0.04
+
 
 class TestHorizon:
     @pytest.fixture(scope="class")
