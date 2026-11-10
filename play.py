@@ -23,8 +23,17 @@ ROOT = Path(__file__).resolve().parent
 REQUIREMENTS = ROOT / "requirements-aerosim.txt"
 
 # import name -> pip name
+#
+# pygame comes from pygame-ce, the community edition, which installs the same
+# ``pygame`` module and is a drop-in replacement for everything this game
+# uses. The original ``pygame`` package has not been released since 2.6.1 in
+# September 2024 and has no ready-made build for Python 3.14 on Windows, so
+# pip falls back to compiling it from source -- which needs a C compiler and
+# fails on current setuptools with "No module named
+# 'setuptools._distutils.msvccompiler'". pygame-ce ships builds for 3.10
+# through 3.15.
 NEEDED = {
-    "pygame": "pygame>=2.5",
+    "pygame": "pygame-ce>=2.5",
     "numpy": "numpy>=1.24",
     "yaml": "PyYAML>=6.0",
 }
@@ -41,18 +50,59 @@ def missing() -> list[str]:
     return absent
 
 
+def _upstream_pygame_installed() -> bool:
+    """Is the original ``pygame`` distribution present, rather than pygame-ce?
+
+    Both install into the same ``pygame`` folder. Putting pygame-ce on top of
+    an existing pygame leaves a mixture of the two that fails in confusing
+    ways, so if the original is there it has to come out first.
+    """
+    try:
+        from importlib import metadata
+
+        metadata.distribution("pygame")
+        return True
+    except Exception:
+        return False
+
+
 def install(requirements: list[str]) -> bool:
+    if any(r.startswith("pygame-ce") for r in requirements) and _upstream_pygame_installed():
+        print(
+            "\nThe original 'pygame' package is installed but cannot be imported,\n"
+            "and pygame-ce cannot safely be installed on top of it. Remove it\n"
+            "first, then run this again:\n"
+            f"    {sys.executable} -m pip uninstall pygame\n",
+            file=sys.stderr,
+        )
+        return False
+
     print("Installing: " + ", ".join(requirements))
-    command = [sys.executable, "-m", "pip", "install", *requirements]
+    # --prefer-binary: take the newest version that has a ready-made build
+    # over a newer one that would have to be compiled. Compiling needs a C
+    # toolchain most machines do not have, and the error it produces when it
+    # fails is a page of build-system traceback that says nothing useful.
+    command = [
+        sys.executable, "-m", "pip", "install", "--prefer-binary", *requirements
+    ]
     try:
         completed = subprocess.run(command, check=False)
     except OSError as exc:
         print(f"could not run pip: {exc}", file=sys.stderr)
         return False
     if completed.returncode != 0:
+        version = f"{sys.version_info.major}.{sys.version_info.minor}"
         print(
-            "\npip failed. Install the dependencies yourself with:\n"
-            f"    {sys.executable} -m pip install -r {REQUIREMENTS}\n",
+            "\npip could not install the packages above.\n"
+            "\n"
+            "The usual cause is that one of them has no ready-made build for\n"
+            f"Python {version} on this computer yet, so pip tried to compile it\n"
+            "from source, which needs a C compiler. If the output above mentions\n"
+            "'Failed to build' or 'msvccompiler', that is what happened.\n"
+            "\n"
+            "Python 3.12 or 3.13 is the safe choice: every package this game\n"
+            "uses has ready-made builds for both. Or try installing directly:\n"
+            f"    {sys.executable} -m pip install --prefer-binary -r {REQUIREMENTS}\n",
             file=sys.stderr,
         )
         return False

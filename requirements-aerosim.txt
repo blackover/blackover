@@ -1,5 +1,15 @@
 # AeroSim Lab flight simulator
-pygame>=2.5
+#
+# pygame-ce is the community edition of pygame: it installs the same `pygame`
+# module and the game needs no change to use it. It is here instead of the
+# original `pygame` because the original has no ready-made build for
+# Python 3.14 on Windows, and pip's fallback -- compiling it from source --
+# fails without a C compiler.
+#
+# If the original pygame is already installed, remove it first; the two write
+# to the same folder and must not be mixed:
+#     python -m pip uninstall pygame
+pygame-ce>=2.5
 numpy>=1.24
 PyYAML>=6.0
 

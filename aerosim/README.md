@@ -26,9 +26,18 @@ python play.py --record             # fly, recording telemetry from the start
 python play.py --replay runs/<dir>  # watch a recorded run back
 ```
 
-Requires Python 3.10+. Developed against Python 3.11, pygame 2.6.1,
-NumPy 2.4.6. `python -m aerosim` works too if you would rather install the
-dependencies yourself from `requirements-aerosim.txt`.
+Requires Python 3.10+, and runs on 3.14. The window and drawing come from
+**pygame-ce**, the community edition of pygame: it installs the same `pygame`
+module, so nothing in the game changes, and unlike the original package it
+ships ready-made builds for Python 3.14. The original `pygame` has had no
+release since 2.6.1 in 2024, and on 3.14 pip falls back to compiling it from
+source -- which fails on Windows with `No module named
+'setuptools._distutils.msvccompiler'`. If you already have the original
+installed and working, the launcher leaves it alone; if you install from the
+requirements file by hand, uninstall it first, because the two share a folder.
+
+`python -m aerosim` works too if you would rather install the dependencies
+yourself from `requirements-aerosim.txt`.
 
 **In a hurry?** Start the flight, press `4`, then `5`. The aircraft takes off,
 climbs, routes itself to the runway and lands, and you can watch.
