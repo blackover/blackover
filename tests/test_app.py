@@ -259,6 +259,124 @@ def test_advice_and_gate():
     assert isinstance(allowed, bool) and reason
 
 
+def test_assets_and_settings():
+    from xrp_predictor.assets import resolve_asset
+    from xrp_predictor.settings import Settings
+
+    assert resolve_asset("xrp").kind == "crypto"
+    assert resolve_asset("BTC").currency == "USD"
+    aapl = resolve_asset("AAPL")
+    assert aapl.kind == "us_stock" and aapl.yahoo == "AAPL"
+    thyao = resolve_asset("THYAO")
+    assert thyao.kind == "tr_stock" and thyao.yahoo == "THYAO.IS"
+    assert thyao.currency == "TRY"
+    assert resolve_asset("KCHOL.IS").kind == "tr_stock"   # explicit suffix
+    assert resolve_asset("ZZZZ").kind == "us_stock"       # unknown -> US
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "settings.json")
+        s = Settings.load(path)
+        assert s.market_enabled("crypto") and not s.market_enabled("us_stocks")
+        assert s.scan_symbols()[0] == "XRP"
+        s.set_market("us_stocks", True)
+        s.add_symbol("us_stocks", "amd")
+        s2 = Settings.load(path)                 # persisted?
+        assert s2.market_enabled("us_stocks")
+        assert "AMD" in s2.watchlist("us_stocks")
+        assert "AAPL" in s2.scan_symbols()
+        s2.remove_symbol("us_stocks", "AMD")
+        assert "AMD" not in Settings.load(path).watchlist("us_stocks")
+        # watchlist membership steers resolution
+        s2.add_symbol("tr_stocks", "KCHOL")
+        assert resolve_asset("KCHOL", Settings.load(path)).kind == "tr_stock"
+
+
+def test_stock_parsers():
+    from xrp_predictor.stocks import parse_stooq, parse_yahoo_chart
+
+    payload = {"chart": {"result": [{
+        "timestamp": [1700000000, 1700003600, 1700007200],
+        "indicators": {"quote": [{
+            "open": [10.0, 10.5, None],
+            "high": [10.6, 10.9, None],
+            "low": [9.9, 10.4, None],
+            "close": [10.5, 10.8, None],   # None row must be dropped
+            "volume": [1000, 1200, None],
+        }]},
+    }], "error": None}}
+    df = parse_yahoo_chart(payload)
+    assert len(df) == 2
+    assert df["close"].iloc[-1] == 10.8
+    assert str(df["time"].dt.tz) == "UTC"
+
+    csv_text = ("Date,Open,High,Low,Close,Volume\n"
+                "2026-11-13,100,102,99,101,5000\n"
+                "2026-11-14,101,103,100,102.5,6000\n")
+    df2 = parse_stooq(csv_text)
+    assert len(df2) == 2 and df2["close"].iloc[-1] == 102.5
+
+
+def test_news_sentiment():
+    from xrp_predictor.news import (headline_sentiment, parse_rss, summarize)
+
+    assert headline_sentiment("Shares surge to record high on strong profit") == 1
+    assert headline_sentiment("Stock plunges after lawsuit and downgrade") == -1
+    assert headline_sentiment("Company announces quarterly meeting date") == 0
+    assert headline_sentiment("THYAO hissesi rekor kazanç ile yükseldi") == 1
+    assert headline_sentiment("Hisse dava haberiyle düşüşe geçti") == -1
+
+    rss = """<?xml version="1.0"?><rss version="2.0"><channel>
+      <title>feed</title>
+      <item><title>Acme stock surges on record profit</title>
+        <pubDate>Fri, 14 Nov 2026 10:00:00 GMT</pubDate>
+        <source url="https://x">Example News</source></item>
+      <item><title>Acme faces lawsuit over product recall</title>
+        <pubDate>Fri, 14 Nov 2026 09:00:00 GMT</pubDate></item>
+      <item><title>Acme to hold annual meeting</title></item>
+    </channel></rss>"""
+    items = parse_rss(rss)
+    assert len(items) == 3 and items[0]["source"] == "Example News"
+    for item in items:
+        item["sentiment"] = headline_sentiment(item["title"])
+    summary = summarize(items)
+    assert summary["positive"] == 1 and summary["negative"] == 1
+    assert summary["n"] == 3 and summary["label"] == "mixed/neutral"
+
+
+def test_cli_stock_symbol_offline_and_settings_cmd():
+    from xrp_predictor.cli import main
+
+    csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "sample_data", "synthetic_demo.csv")
+    with tempfile.TemporaryDirectory() as tmp:
+        cwd = os.getcwd()
+        os.chdir(tmp)   # settings.json and outputs land here
+        try:
+            # stock symbol works fully offline through the csv source
+            rc = main(["simulate", "--symbol", "AAPL", "--source", "csv",
+                       "--csv", csv_path, "--trades-csv",
+                       os.path.join(tmp, "t.csv"), "--log-dir", tmp])
+            assert rc == 0
+            rc = main(["settings", "enable", "tr_stocks"])
+            assert rc == 0
+            rc = main(["settings", "add", "tr_stocks", "KCHOL"])
+            assert rc == 0
+            raw = open(os.path.join(tmp, "settings.json")).read()
+            assert "tr_stocks" in raw and "KCHOL" in raw
+            # portfolio view over a fabricated paper portfolio, offline
+            open(os.path.join(tmp, "paper_portfolio_XRP.json"), "w").write(
+                '{"coin": "XRP", "usd": 0.0, "units": 400.0, "fee": 0.001,'
+                '"starting_usd": 1000.0,'
+                '"history": [{"time": "2026-11-01T00:00:00+00:00",'
+                '"action": "BUY", "coin": "XRP", "price": 2.5,'
+                '"units": 400.0, "usd_spent": 1000.0}]}')
+            rc = main(["portfolio", "--source", "csv", "--csv", csv_path,
+                       "--log-dir", tmp])
+            assert rc == 0
+        finally:
+            os.chdir(cwd)
+
+
 def test_cli_simulate_and_scan_offline():
     from xrp_predictor.cli import main
 

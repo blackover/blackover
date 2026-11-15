@@ -28,6 +28,7 @@ class PaperPortfolio:
     fee: float
     history: list[dict]
     path: Path
+    starting_usd: float = STARTING_USD
 
     @classmethod
     def load(cls, path: str | None = None, coin: str = "XRP",
@@ -39,9 +40,10 @@ class PaperPortfolio:
             return cls(coin=raw.get("coin", coin), usd=raw["usd"],
                        units=raw.get("units", raw.get("xrp", 0.0)),
                        fee=raw.get("fee", fee), history=raw.get("history", []),
-                       path=p)
+                       path=p,
+                       starting_usd=raw.get("starting_usd", starting_usd))
         return cls(coin=coin, usd=starting_usd, units=0.0, fee=fee,
-                   history=[], path=p)
+                   history=[], path=p, starting_usd=starting_usd)
 
     def save(self) -> None:
         self.path.write_text(json.dumps({
@@ -49,6 +51,7 @@ class PaperPortfolio:
             "usd": round(self.usd, 8),
             "units": round(self.units, 8),
             "fee": self.fee,
+            "starting_usd": self.starting_usd,
             "history": self.history,
         }, indent=2))
 

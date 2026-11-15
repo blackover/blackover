@@ -18,6 +18,13 @@ from .model import DirectionModel, build_features, build_labels
 from .strategy import action_for, combined_score, rule_scores
 
 BARS_PER_YEAR = {"15m": 35040, "1h": 8760, "4h": 2190, "1d": 365}
+# Stocks trade ~6.5h/day, ~252 days/year
+STOCK_BARS_PER_YEAR = {"15m": 6552, "1h": 1638, "4h": 410, "1d": 252}
+
+
+def periods_per_year(interval: str, kind: str = "crypto") -> int:
+    table = BARS_PER_YEAR if kind == "crypto" else STOCK_BARS_PER_YEAR
+    return table.get(interval, 8760)
 
 
 @dataclass
@@ -66,7 +73,8 @@ class BacktestResult:
 
 def run_backtest(ind: pd.DataFrame, interval: str = "1h", fee: float = 0.001,
                  retrain_every: int = 24, min_train: int = 150,
-                 use_model: bool = True) -> BacktestResult:
+                 use_model: bool = True,
+                 annualize_periods: int | None = None) -> BacktestResult:
     """Simulate the strategy over an indicator-decorated OHLCV frame."""
     features = build_features(ind)
     labels = build_labels(ind)
@@ -135,7 +143,7 @@ def run_backtest(ind: pd.DataFrame, interval: str = "1h", fee: float = 0.001,
     max_dd = float(((curve - running_max) / running_max).min())
 
     returns = pd.Series(curve).pct_change().dropna()
-    per_year = BARS_PER_YEAR.get(interval, 8760)
+    per_year = annualize_periods or BARS_PER_YEAR.get(interval, 8760)
     sharpe = 0.0
     if len(returns) > 1 and returns.std(ddof=0) > 0:
         sharpe = float(returns.mean() / returns.std(ddof=0) * np.sqrt(per_year))

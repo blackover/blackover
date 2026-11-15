@@ -38,12 +38,14 @@ class Signal:
     reasons: list[str] = field(default_factory=list)
     interval: str = "1h"
     source: str = ""
-    coin: str = "XRP"
+    coin: str = "XRP"           # any symbol: coin, US stock or BIST stock
+    currency: str = "USD"
 
     def to_dict(self) -> dict:
         return {
             "time": self.time.isoformat(),
             "coin": self.coin,
+            "currency": self.currency,
             "price": round(self.price, 6),
             "action": self.action,
             "score": round(self.score, 4),
@@ -132,7 +134,8 @@ def action_for(score: float) -> str:
 
 def make_signal(ind: pd.DataFrame, prob_up: float | None,
                 interval: str = "1h", source: str = "",
-                row_index: int = -1, coin: str = "XRP") -> Signal:
+                row_index: int = -1, coin: str = "XRP",
+                currency: str = "USD") -> Signal:
     """Build the Signal for one row (default: the most recent candle)."""
     row = ind.iloc[row_index]
     scores = rule_scores(row)
@@ -148,4 +151,5 @@ def make_signal(ind: pd.DataFrame, prob_up: float | None,
         interval=interval,
         source=source,
         coin=coin,
+        currency=currency,
     )

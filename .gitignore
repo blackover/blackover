@@ -11,3 +11,4 @@ paper_portfolio_*.json
 simulation_trades.csv
 logs/
 live_state_*.json
+settings.json

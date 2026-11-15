@@ -137,6 +137,7 @@ def _fmt_val(v, digits=4):
 def _signal_tiles(signal: Signal) -> str:
     icon = {"BUY": "&#9650;", "SELL": "&#9660;", "HOLD": "&#9679;"}[signal.action]
     cls = {"BUY": "good", "SELL": "critical", "HOLD": "neutral"}[signal.action]
+    cur = "&#8378;" if signal.currency == "TRY" else "$"
     prob = ("n/a" if signal.prob_up is None
             else f"{signal.prob_up * 100:.1f}%")
     return f"""
@@ -146,8 +147,8 @@ def _signal_tiles(signal: Signal) -> str:
     <div class="tile-value"><span class="sig-icon" aria-hidden="true">{icon}</span> {signal.action}</div>
   </div>
   <div class="tile">
-    <div class="tile-label">{signal.coin} price</div>
-    <div class="tile-value">${signal.price:.4f}</div>
+    <div class="tile-label">{signal.coin} price ({signal.currency})</div>
+    <div class="tile-value">{cur}{signal.price:.4f}</div>
   </div>
   <div class="tile">
     <div class="tile-label">Confidence</div>
@@ -357,11 +358,12 @@ def generate_report(signal: Signal, ind: pd.DataFrame,
                     markers.append({"i": j, "value": tr.exit_price, "kind": "sell"})
 
     price_chart = _line_chart(
-        "price", times, [{"name": f"{signal.coin} close (USD)", "values": closes,
+        "price", times, [{"name": f"{signal.coin} close ({signal.currency})",
+                          "values": closes,
                           "var": "--series-1"}], markers=markers)
     price_legend = f"""
 <div class="legend">
-  <span><span class="chip" style="background:var(--series-1)"></span>{signal.coin} close (USD)</span>
+  <span><span class="chip" style="background:var(--series-1)"></span>{signal.coin} close ({signal.currency})</span>
   <span><span class="tri" style="color:var(--status-good)">&#9650;</span>paper buy</span>
   <span><span class="tri" style="color:var(--status-critical)">&#9660;</span>paper sell</span>
 </div>"""

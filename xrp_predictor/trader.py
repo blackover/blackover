@@ -92,10 +92,12 @@ class LiveTrader:
             self.cash = float(state["cash_usd"])
             self.units = float(state["units"])
             self.orders = state.get("orders", [])
+            self.starting_usd = float(state.get("starting_usd", budget))
         else:
             self.cash = float(budget)
             self.units = 0.0
             self.orders = []
+            self.starting_usd = float(budget)
             self._save()
 
     def _save(self) -> None:
@@ -105,6 +107,7 @@ class LiveTrader:
             "exchange": self.exchange_id,
             "cash_usd": round(self.cash, 8),
             "units": round(self.units, 8),
+            "starting_usd": round(self.starting_usd, 8),
             "orders": self.orders,
         }, indent=2))
 
