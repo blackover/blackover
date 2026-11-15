@@ -8,7 +8,7 @@ several coins for opportunities and simulate trading on real data.
 This is NOT financial advice and does NOT place real orders.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 SYMBOL = "XRP"
 QUOTE = "USD"

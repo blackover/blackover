@@ -58,6 +58,29 @@ XRP   HOLD           2.1834  +0.142   14%   55%
 BUY opportunities : SOL (+0.31)
 ```
 
+## Get an honest recommendation (signal + evidence + risk plan)
+
+A raw signal is not enough — `advise` first checks how the strategy and
+model have **actually performed on this coin recently** (walk-forward),
+assigns a trust level, and only then recommends. A BUY with weak evidence
+is downgraded to **WAIT**. It also gives a risk plan: ATR-based stop-loss
+and take-profit, and a position size for your capital at 1% risk per trade:
+
+```bash
+python -m xrp_predictor advise --coin XRP --capital 1000
+python -m xrp_predictor advise --coin SOL --capital 5000 --risk 0.02
+```
+
+```
+=== RECOMMENDATION: BUY ===  XRP $2.1834
+raw signal: BUY (score +0.46, confidence 46%)   evidence trust: HIGH
+...
+  * Recent evidence (last 720 candles): strategy +4.2% vs just holding -1.3%,
+    win rate 58% over 12 trades, model direction correct 54% of the time.
+  * Risk plan: buy about $312.00 (31% of $1,000), stop-loss $2.0510 (-6.1%),
+    take-profit $2.3820 (+9.1%). That risks about 1% of capital if the stop is hit.
+```
+
 ## Simulation mode — test the strategy on real data
 
 Replays the strategy over real downloaded history (walk-forward, the model
@@ -116,6 +139,8 @@ wrapped in safety rails:
 - API keys come **only** from environment variables, never files or flags;
 - you must type `LIVE` at startup to confirm (or pass `--yes` for
   unattended runs);
+- add `--gated` (recommended!) and the bot refuses automatic BUYs while
+  recent evidence shows the strategy losing on that coin;
 - every order is appended to `live_state_<COIN>.json` and the run log.
 
 Setup:
@@ -125,7 +150,7 @@ pip install ccxt                      # exchange connector (100+ exchanges)
 export EXCHANGE_API_KEY="...your key..."
 export EXCHANGE_API_SECRET="...your secret..."
 
-python -m xrp_predictor watch --coin XRP --interval 1h --live \
+python -m xrp_predictor watch --coin XRP --interval 1h --live --gated \
     --exchange binance --budget 100 --max-usd 50
 ```
 
@@ -200,7 +225,9 @@ prices.
 | `xrp_predictor/model.py` | numpy logistic regression → P(next candle up) |
 | `xrp_predictor/strategy.py` | blends rules + model into BUY/SELL/HOLD |
 | `xrp_predictor/backtest.py` | walk-forward historical simulation |
+| `xrp_predictor/advice.py` | evidence check, trust level, risk plan, BUY gate |
 | `xrp_predictor/paper.py` | simulated (paper) trading portfolio |
+| `xrp_predictor/trader.py` | live order execution via ccxt (budget-capped) |
 | `xrp_predictor/runlog.py` | predictor.log + predictor_log.jsonl writers |
 | `xrp_predictor/report.py` | self-contained HTML report with charts |
-| `xrp_predictor/cli.py` | signal / scan / simulate / backtest / report / watch |
+| `xrp_predictor/cli.py` | signal / scan / advise / simulate / backtest / report / watch |

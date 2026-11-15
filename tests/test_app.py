@@ -221,6 +221,44 @@ def test_live_trader_with_fake_exchange():
         assert len(tr2.orders) == 3
 
 
+def test_advice_and_gate():
+    from xrp_predictor.advice import (Evidence, gate_allows_buy, make_advice,
+                                      trust_level)
+
+    # trust rules are transparent and testable in isolation
+    winning = Evidence(window_bars=500, strategy_return=0.05,
+                       hold_return=-0.02, n_trades=6, win_rate=0.6,
+                       model_hit_rate=0.55)
+    losing = Evidence(window_bars=500, strategy_return=-0.08,
+                      hold_return=-0.02, n_trades=6, win_rate=0.2,
+                      model_hit_rate=0.50)
+    blind = Evidence(window_bars=500, strategy_return=0.03,
+                     hold_return=0.01, n_trades=4, win_rate=0.5,
+                     model_hit_rate=0.40)
+    assert trust_level(winning) == "HIGH"
+    assert trust_level(losing) == "LOW"
+    assert trust_level(blind) == "LOW"
+
+    ind = _ind()
+    result = run_backtest(ind, interval="1h")
+    signal = make_signal(ind, prob_up=0.6, source="test", coin="XRP")
+    advice = make_advice(signal, ind, result, capital=2000.0)
+    assert advice.trust in ("HIGH", "MEDIUM", "LOW")
+    assert advice.recommended_action in ("BUY", "SELL", "HOLD", "WAIT")
+    assert len(advice.notes) >= 2
+    d = advice.to_dict()
+    assert d["evidence"]["window_bars"] > 0
+    if advice.recommended_action == "BUY":
+        assert advice.stop_loss < signal.price < advice.take_profit
+        assert 0 < advice.position_usd <= 2000.0
+    # a LOW-trust BUY must never pass through as BUY
+    if advice.trust == "LOW":
+        assert advice.recommended_action != "BUY"
+
+    allowed, reason = gate_allows_buy(result, "1h")
+    assert isinstance(allowed, bool) and reason
+
+
 def test_cli_simulate_and_scan_offline():
     from xrp_predictor.cli import main
 

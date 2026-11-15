@@ -2,6 +2,7 @@
 
     python -m xrp_predictor signal     # one prediction now (default coin XRP)
     python -m xrp_predictor scan       # scan ALL coins for opportunities
+    python -m xrp_predictor advise     # evidence-checked recommendation + risk plan
     python -m xrp_predictor simulate   # replay strategy on real history, trade by trade
     python -m xrp_predictor backtest   # summary statistics of the strategy
     python -m xrp_predictor report     # write report.html with charts
@@ -21,6 +22,7 @@ import time
 from pathlib import Path
 
 from . import __version__
+from .advice import gate_allows_buy, make_advice
 from .backtest import run_backtest
 from .data import COINS, INTERVALS, fetch_ohlcv, interval_seconds
 from .indicators import add_indicators
@@ -247,6 +249,51 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_advise(args) -> int:
+    """Signal + evidence check + risk plan = an honest recommendation."""
+    log = _runlog(args)
+    ind, source = _load(args)
+    try:
+        _, prob_up = train_for_live(ind)
+    except ValueError:
+        prob_up = None
+    signal = make_signal(ind, prob_up, interval=args.interval, source=source,
+                         coin=args.coin)
+    result = run_backtest(ind, interval=args.interval, fee=args.fee)
+    advice = make_advice(signal, ind, result, capital=args.capital,
+                         risk_per_trade=args.risk)
+    log.signal(signal)
+    log.backtest(args.coin, result)
+    log.event("ADVICE",
+              f"{args.coin} {signal.interval} recommend "
+              f"{advice.recommended_action} (signal {signal.action}, "
+              f"trust {advice.trust})",
+              {"advice": advice.to_dict()})
+
+    if args.json:
+        print(json.dumps(advice.to_dict(), indent=2))
+        return 0
+
+    print(f"\n=== RECOMMENDATION: {advice.recommended_action} ===  "
+          f"{args.coin} ${signal.price:.4f}")
+    print(f"raw signal: {signal.action} (score {signal.score:+.3f}, "
+          f"confidence {signal.confidence:.0f}%)   "
+          f"evidence trust: {advice.trust}")
+    if signal.prob_up is not None:
+        print(f"ML model: P(next candle up) = {signal.prob_up:.1%}")
+    print("\nsignal reasons:")
+    for r in signal.reasons:
+        print(f"  - {r}")
+    print("\nrecommendation notes:")
+    for n in advice.notes:
+        print(f"  * {n}")
+    if advice.stop_loss is not None:
+        print(f"\nrisk plan: position ${advice.position_usd:,.2f}  "
+              f"stop-loss ${advice.stop_loss:.4f}  "
+              f"take-profit ${advice.take_profit:.4f}")
+    return 0
+
+
 def cmd_watch(args) -> int:
     """Run forever: one prediction per candle (hourly/daily/...)."""
     log = _runlog(args)
@@ -298,14 +345,36 @@ def cmd_watch(args) -> int:
             log.signal(signal)
             if args.log:
                 _append_log(signal, args.log)
-            if live_trader is not None:
+
+            # Evidence gate: refuse automatic BUYs while the strategy has
+            # not been working on this coin recently.  SELL always passes
+            # (exiting risk is the cautious move).
+            suppress_buy = False
+            if (args.gated and signal.action == "BUY"
+                    and (live_trader is not None or portfolio is not None)):
+                try:
+                    gate_bt = run_backtest(ind, interval=args.interval,
+                                           fee=args.fee)
+                    allowed, reason = gate_allows_buy(gate_bt, args.interval)
+                except ValueError as exc:
+                    allowed, reason = False, f"not enough history ({exc})"
+                log.event("GATE",
+                          f"{args.coin} BUY "
+                          f"{'allowed' if allowed else 'SUPPRESSED'} — {reason}",
+                          {"gate": {"coin": args.coin, "allowed": allowed,
+                                    "reason": reason}})
+                if not allowed:
+                    suppress_buy = True
+                    print(f"[gate] BUY suppressed — {reason}")
+
+            if live_trader is not None and not suppress_buy:
                 msg = live_trader.execute(signal)
                 print(msg)
                 print(f"live budget value: "
                       f"${live_trader.value(signal.price):.2f} "
                       f"(cash ${live_trader.cash:.2f} + "
                       f"{live_trader.units:.6f} {args.coin})")
-            if portfolio is not None:
+            if portfolio is not None and not suppress_buy:
                 before_units = portfolio.units
                 print(portfolio.apply_signal(signal))
                 print(f"portfolio value: ${portfolio.value(signal.price):.2f} "
@@ -403,6 +472,19 @@ def build_parser() -> argparse.ArgumentParser:
                                            "(default simulation_trades.csv)")
     p_sim.set_defaults(func=cmd_simulate)
 
+    p_adv = sub.add_parser("advise",
+                           help="evidence-checked recommendation with risk "
+                                "plan (stop-loss, take-profit, size)")
+    common(p_adv)
+    p_adv.add_argument("--capital", type=float, default=1000.0,
+                       help="your capital in USD for position sizing "
+                            "(default 1000)")
+    p_adv.add_argument("--risk", type=float, default=0.01,
+                       help="fraction of capital to risk per trade "
+                            "(default 0.01 = 1%%)")
+    p_adv.add_argument("--json", action="store_true", help="output JSON")
+    p_adv.set_defaults(func=cmd_advise)
+
     p_report = sub.add_parser("report", help="write an HTML report with charts")
     common(p_report)
     p_report.add_argument("--out", default="report.html", help="output file")
@@ -432,6 +514,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_watch.add_argument("--yes", action="store_true",
                          help="skip the interactive LIVE confirmation "
                               "(for running under nohup/systemd)")
+    p_watch.add_argument("--gated", action="store_true",
+                         help="only auto-BUY while recent evidence shows the "
+                              "strategy working on this coin (recommended)")
     p_watch.add_argument("--portfolio", default=None,
                          help="paper portfolio state file "
                               "(default paper_portfolio_<COIN>.json)")
