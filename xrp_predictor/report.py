@@ -146,7 +146,7 @@ def _signal_tiles(signal: Signal) -> str:
     <div class="tile-value"><span class="sig-icon" aria-hidden="true">{icon}</span> {signal.action}</div>
   </div>
   <div class="tile">
-    <div class="tile-label">XRP price</div>
+    <div class="tile-label">{signal.coin} price</div>
     <div class="tile-value">${signal.price:.4f}</div>
   </div>
   <div class="tile">
@@ -357,11 +357,11 @@ def generate_report(signal: Signal, ind: pd.DataFrame,
                     markers.append({"i": j, "value": tr.exit_price, "kind": "sell"})
 
     price_chart = _line_chart(
-        "price", times, [{"name": "XRP close (USD)", "values": closes,
+        "price", times, [{"name": f"{signal.coin} close (USD)", "values": closes,
                           "var": "--series-1"}], markers=markers)
-    price_legend = """
+    price_legend = f"""
 <div class="legend">
-  <span><span class="chip" style="background:var(--series-1)"></span>XRP close (USD)</span>
+  <span><span class="chip" style="background:var(--series-1)"></span>{signal.coin} close (USD)</span>
   <span><span class="tri" style="color:var(--status-good)">&#9650;</span>paper buy</span>
   <span><span class="tri" style="color:var(--status-critical)">&#9660;</span>paper sell</span>
 </div>"""
@@ -402,12 +402,12 @@ def generate_report(signal: Signal, ind: pd.DataFrame,
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>XRP signal report</title>
+<title>{signal.coin} signal report</title>
 <style>{CSS}</style>
 </head>
 <body>
 <div class="viz-root">
-  <h1>XRP short-term signal</h1>
+  <h1>{signal.coin} short-term signal</h1>
   <p class="meta">Generated {pd.Timestamp.now(tz="UTC"):%Y-%m-%d %H:%M} UTC</p>
   {_signal_tiles(signal)}
   {_reasons(signal)}

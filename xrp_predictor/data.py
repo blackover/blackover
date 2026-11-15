@@ -1,4 +1,4 @@
-"""Market data fetching for XRP/USD.
+"""Market data fetching for supported coins (XRP by default).
 
 Tries several free public APIs in order (no API key required):
 
@@ -18,7 +18,22 @@ import time as _time
 import pandas as pd
 import requests
 
-USER_AGENT = "xrp-predictor/1.0 (educational)"
+USER_AGENT = "xrp-predictor/1.1 (educational)"
+
+# Supported coins and their identifiers on each data source.
+# XRP is the default; the rest are scanned for opportunities.
+COINS = {
+    "XRP":  {"binance": "XRPUSDT",  "kraken": "XRPUSD",  "coingecko": "ripple"},
+    "BTC":  {"binance": "BTCUSDT",  "kraken": "XBTUSD",  "coingecko": "bitcoin"},
+    "ETH":  {"binance": "ETHUSDT",  "kraken": "ETHUSD",  "coingecko": "ethereum"},
+    "SOL":  {"binance": "SOLUSDT",  "kraken": "SOLUSD",  "coingecko": "solana"},
+    "ADA":  {"binance": "ADAUSDT",  "kraken": "ADAUSD",  "coingecko": "cardano"},
+    "DOGE": {"binance": "DOGEUSDT", "kraken": "DOGEUSD", "coingecko": "dogecoin"},
+    "LINK": {"binance": "LINKUSDT", "kraken": "LINKUSD", "coingecko": "chainlink"},
+    "LTC":  {"binance": "LTCUSDT",  "kraken": "LTCUSD",  "coingecko": "litecoin"},
+    "DOT":  {"binance": "DOTUSDT",  "kraken": "DOTUSD",  "coingecko": "polkadot"},
+    "AVAX": {"binance": "AVAXUSDT", "kraken": "AVAXUSD", "coingecko": "avalanche-2"},
+}
 
 # interval name -> (binance interval, kraken minutes, seconds per candle)
 INTERVALS = {
@@ -46,11 +61,12 @@ def _get(url: str, params: dict | None = None, timeout: int = 20) -> dict | list
     return resp.json()
 
 
-def fetch_binance(interval: str = "1h", limit: int = 720) -> pd.DataFrame:
+def fetch_binance(interval: str = "1h", limit: int = 720,
+                  coin: str = "XRP") -> pd.DataFrame:
     binance_interval = INTERVALS[interval][0]
     raw = _get(
         "https://api.binance.com/api/v3/klines",
-        {"symbol": "XRPUSDT", "interval": binance_interval,
+        {"symbol": COINS[coin]["binance"], "interval": binance_interval,
          "limit": min(limit, 1000)},
     )
     rows = [
@@ -67,10 +83,11 @@ def fetch_binance(interval: str = "1h", limit: int = 720) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=COLUMNS)
 
 
-def fetch_kraken(interval: str = "1h", limit: int = 720) -> pd.DataFrame:
+def fetch_kraken(interval: str = "1h", limit: int = 720,
+                 coin: str = "XRP") -> pd.DataFrame:
     minutes = INTERVALS[interval][1]
     raw = _get("https://api.kraken.com/0/public/OHLC",
-               {"pair": "XRPUSD", "interval": minutes})
+               {"pair": COINS[coin]["kraken"], "interval": minutes})
     if raw.get("error"):
         raise DataError(f"Kraken error: {raw['error']}")
     result = raw["result"]
@@ -90,7 +107,8 @@ def fetch_kraken(interval: str = "1h", limit: int = 720) -> pd.DataFrame:
     return df.tail(limit).reset_index(drop=True)
 
 
-def fetch_coingecko(interval: str = "1h", limit: int = 720) -> pd.DataFrame:
+def fetch_coingecko(interval: str = "1h", limit: int = 720,
+                    coin: str = "XRP") -> pd.DataFrame:
     # CoinGecko market_chart gives close prices + volumes.  Granularity is
     # automatic: days<=1 -> 5min, days<=90 -> hourly, otherwise daily.
     seconds = interval_seconds(interval)
@@ -98,7 +116,7 @@ def fetch_coingecko(interval: str = "1h", limit: int = 720) -> pd.DataFrame:
     if interval == "1d":
         days = min(365, limit + 1)
     raw = _get(
-        "https://api.coingecko.com/api/v3/coins/ripple/market_chart",
+        f"https://api.coingecko.com/api/v3/coins/{COINS[coin]['coingecko']}/market_chart",
         {"vs_currency": "usd", "days": days},
     )
     prices = pd.DataFrame(raw["prices"], columns=["ms", "close"])
@@ -133,10 +151,12 @@ FETCHERS = {
 
 def fetch_ohlcv(interval: str = "1h", limit: int = 720,
                 source: str = "auto", csv_path: str | None = None,
-                retries: int = 2) -> tuple[pd.DataFrame, str]:
-    """Fetch candles.  Returns (dataframe, source_name_used)."""
+                retries: int = 2, coin: str = "XRP") -> tuple[pd.DataFrame, str]:
+    """Fetch candles for one coin.  Returns (dataframe, source_name_used)."""
     if interval not in INTERVALS:
         raise ValueError(f"interval must be one of {sorted(INTERVALS)}")
+    if coin not in COINS:
+        raise ValueError(f"unknown coin '{coin}' (choose from {'/'.join(COINS)})")
 
     if source == "csv" or csv_path:
         if not csv_path:
@@ -152,7 +172,7 @@ def fetch_ohlcv(interval: str = "1h", limit: int = 720,
                              f"(choose from auto/csv/{'/'.join(FETCHERS)})")
         for attempt in range(retries + 1):
             try:
-                df = fetcher(interval=interval, limit=limit)
+                df = fetcher(interval=interval, limit=limit, coin=coin)
                 if len(df) < 60:
                     raise DataError(f"{name} returned only {len(df)} candles")
                 return df, name
@@ -160,7 +180,7 @@ def fetch_ohlcv(interval: str = "1h", limit: int = 720,
                 errors.append(f"{name}: {exc}")
                 if attempt < retries:
                     _time.sleep(2 ** attempt)
-    raise DataError("all data sources failed:\n  " + "\n  ".join(errors))
+    raise DataError(f"all data sources failed for {coin}:\n  " + "\n  ".join(errors))
 
 
 def load_csv(path: str) -> pd.DataFrame:

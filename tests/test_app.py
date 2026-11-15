@@ -102,14 +102,74 @@ def test_paper_portfolio_roundtrip():
         path = os.path.join(tmp, "pf.json")
         pf = PaperPortfolio.load(path, starting_usd=1000.0, fee=0.001)
         pf.apply_signal(buy)
-        assert pf.usd == 0.0 and pf.xrp > 0
+        assert pf.usd == 0.0 and pf.units > 0
         pf2 = PaperPortfolio.load(path)          # persisted?
-        assert abs(pf2.xrp - pf.xrp) < 1e-9
+        assert abs(pf2.units - pf.units) < 1e-9
         pf2.apply_signal(sell)
-        assert pf2.xrp == 0.0
+        assert pf2.units == 0.0
         # two fee sides lost, otherwise round trip at same price
         assert abs(pf2.usd - 1000.0 * (1 - 0.001) ** 2) < 1e-6
         assert len(pf2.history) == 2
+
+        # a signal for a different coin must be skipped
+        other = make_signal(ind, prob_up=0.99, source="test", coin="BTC")
+        other.action = "BUY"
+        msg = pf2.apply_signal(other)
+        assert "skipped" in msg and pf2.usd > 0
+
+
+def test_coins_catalog():
+    from xrp_predictor.data import COINS
+    assert "XRP" in COINS and len(COINS) >= 8
+    for coin, ids in COINS.items():
+        assert set(ids) == {"binance", "kraken", "coingecko"}, coin
+    # per-source identifiers must be unique
+    for key in ("binance", "kraken", "coingecko"):
+        vals = [ids[key] for ids in COINS.values()]
+        assert len(vals) == len(set(vals)), key
+
+
+def test_runlog_writes_both_files():
+    import json as _json
+
+    from xrp_predictor.runlog import RunLog
+
+    ind = _ind()
+    sig = make_signal(ind, prob_up=0.6, source="test", coin="XRP")
+    result = run_backtest(ind, interval="1h")
+    with tempfile.TemporaryDirectory() as tmp:
+        log = RunLog(directory=tmp)
+        log.signal(sig)
+        log.backtest("XRP", result)
+        log.trade("XRP", "BUY", 2.5, 400.0, 1000.0, sig.time, note="test")
+        log.error("unit-test", ValueError("boom"))
+        text = open(os.path.join(tmp, "predictor.log")).read()
+        assert "SIGNAL" in text and "BACKTEST" in text
+        assert "TRADE" in text and "ERROR" in text
+        lines = open(os.path.join(tmp, "predictor_log.jsonl")).read().splitlines()
+        assert len(lines) == 4
+        records = [_json.loads(line) for line in lines]
+        assert records[0]["signal"]["coin"] == "XRP"
+        assert records[1]["backtest"]["bars"] == result.bars
+        assert records[3]["error"]["type"] == "ValueError"
+
+
+def test_cli_simulate_and_scan_offline():
+    from xrp_predictor.cli import main
+
+    csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "sample_data", "synthetic_demo.csv")
+    with tempfile.TemporaryDirectory() as tmp:
+        trades_csv = os.path.join(tmp, "trades.csv")
+        rc = main(["simulate", "--source", "csv", "--csv", csv_path,
+                   "--trades-csv", trades_csv, "--log-dir", tmp])
+        assert rc == 0
+        assert os.path.exists(trades_csv)
+        assert os.path.exists(os.path.join(tmp, "predictor_log.jsonl"))
+        # scan offline: every coin reads the same CSV, but the pipeline runs
+        rc = main(["scan", "--coins", "XRP", "--source", "csv",
+                   "--csv", csv_path, "--log-dir", tmp, "--json"])
+        assert rc == 0
 
 
 def test_report_generation():

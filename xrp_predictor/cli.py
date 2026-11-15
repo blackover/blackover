@@ -1,9 +1,14 @@
 """Command line interface.
 
-    python -m xrp_predictor signal    # one prediction now
-    python -m xrp_predictor backtest  # how the strategy did historically
-    python -m xrp_predictor report    # write report.html with charts
-    python -m xrp_predictor watch     # run automatically every candle
+    python -m xrp_predictor signal     # one prediction now (default coin XRP)
+    python -m xrp_predictor scan       # scan ALL coins for opportunities
+    python -m xrp_predictor simulate   # replay strategy on real history, trade by trade
+    python -m xrp_predictor backtest   # summary statistics of the strategy
+    python -m xrp_predictor report     # write report.html with charts
+    python -m xrp_predictor watch      # run automatically every candle
+
+Every command appends to logs/predictor.log (human-readable) and
+logs/predictor_log.jsonl (full detail, good for sharing/tuning).
 """
 
 from __future__ import annotations
@@ -17,30 +22,38 @@ from pathlib import Path
 
 from . import __version__
 from .backtest import run_backtest
-from .data import INTERVALS, fetch_ohlcv, interval_seconds
+from .data import COINS, INTERVALS, fetch_ohlcv, interval_seconds
 from .indicators import add_indicators
 from .model import train_for_live
 from .paper import PaperPortfolio
 from .report import generate_report
+from .runlog import RunLog
 from .strategy import Signal, make_signal
 
-BANNER = ("XRP predictor v{v} — educational tool, NOT financial advice. "
+BANNER = ("Coin predictor v{v} — educational tool, NOT financial advice. "
           "All trading is simulated.")
 
 
-def _load(args) -> tuple:
+def _runlog(args) -> RunLog:
+    return RunLog(directory=args.log_dir, enabled=not args.no_log_file)
+
+
+def _load(args, coin: str | None = None) -> tuple:
+    coin = coin or args.coin
     df, source = fetch_ohlcv(interval=args.interval, limit=args.limit,
-                             source=args.source, csv_path=args.csv)
+                             source=args.source, csv_path=args.csv, coin=coin)
     return add_indicators(df), source
 
 
-def _live_signal(args) -> tuple[Signal, "object"]:
-    ind, source = _load(args)
+def _live_signal(args, coin: str | None = None) -> tuple[Signal, "object"]:
+    coin = coin or args.coin
+    ind, source = _load(args, coin)
     try:
         _, prob_up = train_for_live(ind)
     except ValueError:
         prob_up = None
-    signal = make_signal(ind, prob_up, interval=args.interval, source=source)
+    signal = make_signal(ind, prob_up, interval=args.interval, source=source,
+                         coin=coin)
     return signal, ind
 
 
@@ -48,7 +61,7 @@ def _print_signal(signal: Signal, as_json: bool) -> None:
     if as_json:
         print(json.dumps(signal.to_dict(), indent=2))
         return
-    print(f"\n=== {signal.action} ===  XRP ${signal.price:.4f}  "
+    print(f"\n=== {signal.action} ===  {signal.coin} ${signal.price:.4f}  "
           f"(confidence {signal.confidence:.0f}%)")
     print(f"candle: {signal.time:%Y-%m-%d %H:%M} UTC  interval: {signal.interval}"
           f"  source: {signal.source}  score: {signal.score:+.3f}")
@@ -65,68 +78,206 @@ def _append_log(signal: Signal, path: str) -> None:
     with p.open("a", newline="") as fh:
         writer = csv.writer(fh)
         if new:
-            writer.writerow(["time", "interval", "price", "action",
+            writer.writerow(["time", "coin", "interval", "price", "action",
                              "score", "confidence", "prob_up", "source"])
         d = signal.to_dict()
-        writer.writerow([d["time"], d["interval"], d["price"], d["action"],
-                         d["score"], d["confidence"], d["prob_up"], d["source"]])
+        writer.writerow([d["time"], d["coin"], d["interval"], d["price"],
+                         d["action"], d["score"], d["confidence"],
+                         d["prob_up"], d["source"]])
 
 
 def cmd_signal(args) -> int:
-    signal, _ = _live_signal(args)
+    log = _runlog(args)
+    try:
+        signal, _ = _live_signal(args)
+    except Exception as exc:
+        log.error(f"signal {args.coin}", exc)
+        raise
     _print_signal(signal, args.json)
+    log.signal(signal)
     if args.log:
         _append_log(signal, args.log)
     return 0
 
 
+def cmd_scan(args) -> int:
+    """Check every coin and rank buy/sell opportunities."""
+    log = _runlog(args)
+    coins = ([c.strip().upper() for c in args.coins.split(",")]
+             if args.coins else list(COINS))
+    unknown = [c for c in coins if c not in COINS]
+    if unknown:
+        print(f"unknown coins: {', '.join(unknown)} "
+              f"(supported: {', '.join(COINS)})", file=sys.stderr)
+        return 2
+
+    rows, failures = [], []
+    for coin in coins:
+        try:
+            signal, _ = _live_signal(args, coin)
+            rows.append(signal.to_dict())
+            log.signal(signal)
+        except Exception as exc:  # noqa: BLE001 - keep scanning other coins
+            failures.append(f"{coin}: {exc}")
+            log.error(f"scan {coin}", exc)
+
+    rows.sort(key=lambda r: r["score"], reverse=True)
+    log.scan(rows)
+
+    if args.json:
+        print(json.dumps(rows, indent=2))
+    else:
+        print(f"\nOpportunity scan — {args.interval} candles, "
+              f"{len(rows)} coins (sorted most bullish first)\n")
+        print(f"{'COIN':<6}{'ACTION':<8}{'PRICE':>14}{'SCORE':>8}"
+              f"{'CONF':>6}{'P(UP)':>7}")
+        for r in rows:
+            prob = "  n/a" if r["prob_up"] is None else f"{r['prob_up']*100:4.0f}%"
+            print(f"{r['coin']:<6}{r['action']:<8}{r['price']:>14.4f}"
+                  f"{r['score']:>+8.3f}{r['confidence']:>5.0f}%{prob:>7}")
+        buys = [r for r in rows if r["action"] == "BUY"]
+        sells = [r for r in rows if r["action"] == "SELL"]
+        print()
+        if buys:
+            print("BUY opportunities : " + ", ".join(
+                f"{r['coin']} ({r['score']:+.2f})" for r in buys))
+        if sells:
+            print("SELL signals      : " + ", ".join(
+                f"{r['coin']} ({r['score']:+.2f})" for r in sells))
+        if not buys and not sells:
+            print("No strong opportunity right now — everything is HOLD.")
+    for f in failures:
+        print(f"failed: {f}", file=sys.stderr)
+    return 0
+
+
 def cmd_backtest(args) -> int:
+    log = _runlog(args)
     ind, source = _load(args)
     result = run_backtest(ind, interval=args.interval, fee=args.fee,
                           retrain_every=args.retrain_every,
                           use_model=not args.no_model)
-    print(f"data source: {source}\n")
+    print(f"coin: {args.coin}   data source: {source}\n")
     print(result.summary())
+    log.backtest(args.coin, result)
+    return 0
+
+
+def cmd_simulate(args) -> int:
+    """Replay the strategy over real history and show every buy/sell."""
+    log = _runlog(args)
+    ind, source = _load(args)
+    result = run_backtest(ind, interval=args.interval, fee=args.fee)
+    log.backtest(args.coin, result)
+
+    capital = args.capital
+    cash, units = capital, 0.0
+    print(f"\nSimulation — {args.coin}, {args.interval} candles, source "
+          f"{source}, starting capital ${capital:.2f}, "
+          f"fee {args.fee:.2%}/side\n")
+
+    trade_rows = []
+    for t in result.trades:
+        units = cash * (1.0 - args.fee) / t.entry_price
+        cash = 0.0
+        value = units * t.entry_price
+        print(f"{t.entry_time:%Y-%m-%d %H:%M}  BUY  "
+              f"{units:>12.4f} {args.coin} @ ${t.entry_price:<10.4f} "
+              f"value ${value:,.2f}")
+        log.trade(args.coin, "BUY", t.entry_price, units, value, t.entry_time,
+                  note="simulation")
+        trade_rows.append({"time": t.entry_time.isoformat(), "action": "BUY",
+                           "price": t.entry_price, "units": round(units, 6),
+                           "value_usd": round(value, 2), "pnl_pct": ""})
+        if t.exit_time is None:
+            print(f"{'':18}(position still open at end of data)")
+            cash = units * ind["close"].iloc[-1]  # mark to market
+            continue
+        cash = units * t.exit_price * (1.0 - args.fee)
+        pnl = t.pnl_pct
+        print(f"{t.exit_time:%Y-%m-%d %H:%M}  SELL "
+              f"{units:>12.4f} {args.coin} @ ${t.exit_price:<10.4f} "
+              f"value ${cash:,.2f}  ({pnl:+.2%})")
+        log.trade(args.coin, "SELL", t.exit_price, units, cash, t.exit_time,
+                  note=f"simulation pnl {pnl:+.2%}")
+        trade_rows.append({"time": t.exit_time.isoformat(), "action": "SELL",
+                           "price": t.exit_price, "units": round(units, 6),
+                           "value_usd": round(cash, 2),
+                           "pnl_pct": round(pnl * 100, 3)})
+        units = 0.0
+
+    final = capital * (1.0 + result.total_return)
+    print(f"\n{result.summary()}")
+    print(f"\nFinal value of ${capital:,.2f}: ${final:,.2f} "
+          f"({result.total_return:+.2%})  |  buy & hold would be "
+          f"${capital * (1 + result.buy_hold_return):,.2f} "
+          f"({result.buy_hold_return:+.2%})")
+
+    if args.trades_csv:
+        p = Path(args.trades_csv)
+        with p.open("w", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=["time", "action", "price",
+                                                    "units", "value_usd",
+                                                    "pnl_pct"])
+            writer.writeheader()
+            writer.writerows(trade_rows)
+        print(f"trades written to {p}")
     return 0
 
 
 def cmd_report(args) -> int:
+    log = _runlog(args)
     ind, source = _load(args)
     try:
         _, prob_up = train_for_live(ind)
     except ValueError:
         prob_up = None
-    signal = make_signal(ind, prob_up, interval=args.interval, source=source)
+    signal = make_signal(ind, prob_up, interval=args.interval, source=source,
+                         coin=args.coin)
     result = None
     try:
         result = run_backtest(ind, interval=args.interval, fee=args.fee)
+        log.backtest(args.coin, result)
     except ValueError as exc:
         print(f"(backtest skipped: {exc})", file=sys.stderr)
     path = generate_report(signal, ind, result, out_path=args.out)
     _print_signal(signal, as_json=False)
+    log.signal(signal)
     print(f"\nreport written to {path}")
     return 0
 
 
 def cmd_watch(args) -> int:
     """Run forever: one prediction per candle (hourly/daily/...)."""
-    portfolio = PaperPortfolio.load(args.portfolio, fee=args.fee) if args.trade else None
+    log = _runlog(args)
+    portfolio = (PaperPortfolio.load(args.portfolio, coin=args.coin,
+                                     fee=args.fee)
+                 if args.trade else None)
     seconds = interval_seconds(args.interval)
-    print(f"watching XRP every {args.interval} candle "
+    print(f"watching {args.coin} every {args.interval} candle "
           f"(paper trading: {'ON' if portfolio else 'off'}) — Ctrl+C to stop")
     while True:
         try:
             signal, ind = _live_signal(args)
             _print_signal(signal, args.json)
+            log.signal(signal)
             if args.log:
                 _append_log(signal, args.log)
             if portfolio is not None:
+                before_units = portfolio.units
                 print(portfolio.apply_signal(signal))
                 print(f"portfolio value: ${portfolio.value(signal.price):.2f} "
-                      f"(usd ${portfolio.usd:.2f} + {portfolio.xrp:.4f} XRP)")
+                      f"(usd ${portfolio.usd:.2f} + "
+                      f"{portfolio.units:.4f} {args.coin})")
+                if portfolio.units != before_units:
+                    log.trade(args.coin, signal.action, signal.price,
+                              abs(portfolio.units - before_units),
+                              portfolio.value(signal.price), signal.time,
+                              note="paper")
             if args.report_out:
                 try:
-                    result = run_backtest(ind, interval=args.interval, fee=args.fee)
+                    result = run_backtest(ind, interval=args.interval,
+                                          fee=args.fee)
                 except ValueError:
                     result = None
                 generate_report(signal, ind, result, out_path=args.report_out)
@@ -135,6 +286,7 @@ def cmd_watch(args) -> int:
             raise
         except Exception as exc:  # noqa: BLE001 - keep the loop alive
             print(f"[watch] error: {exc}", file=sys.stderr)
+            log.error(f"watch {args.coin}", exc)
 
         # sleep until shortly after the next candle closes
         now = time.time()
@@ -152,7 +304,12 @@ def build_parser() -> argparse.ArgumentParser:
         description=BANNER.format(v=__version__))
     sub = parser.add_subparsers(dest="command", required=True)
 
-    def common(p):
+    def common(p, coin_flag=True):
+        if coin_flag:
+            p.add_argument("--coin", default="XRP", type=str.upper,
+                           choices=list(COINS), metavar="COIN",
+                           help=f"coin to analyze (default XRP; "
+                                f"choices: {', '.join(COINS)})")
         p.add_argument("--interval", default="1h", choices=sorted(INTERVALS),
                        help="candle size (default 1h)")
         p.add_argument("--limit", type=int, default=720,
@@ -164,6 +321,11 @@ def build_parser() -> argparse.ArgumentParser:
                        help="read candles from a CSV file instead of an API")
         p.add_argument("--fee", type=float, default=0.001,
                        help="simulated fee per trade side (default 0.001 = 0.1%%)")
+        p.add_argument("--log-dir", default="logs",
+                       help="directory for predictor.log / predictor_log.jsonl "
+                            "(default: logs)")
+        p.add_argument("--no-log-file", action="store_true",
+                       help="do not write the run log files")
 
     p_signal = sub.add_parser("signal", help="print one BUY/SELL/HOLD signal now")
     common(p_signal)
@@ -172,6 +334,14 @@ def build_parser() -> argparse.ArgumentParser:
                           help="append the signal to this CSV log")
     p_signal.set_defaults(func=cmd_signal)
 
+    p_scan = sub.add_parser("scan",
+                            help="scan all coins and rank opportunities")
+    common(p_scan, coin_flag=False)
+    p_scan.add_argument("--coins", default=None, metavar="LIST",
+                        help="comma-separated coins (default: all supported)")
+    p_scan.add_argument("--json", action="store_true", help="output JSON")
+    p_scan.set_defaults(func=cmd_scan)
+
     p_back = sub.add_parser("backtest", help="simulate the strategy on history")
     common(p_back)
     p_back.add_argument("--retrain-every", type=int, default=24,
@@ -179,6 +349,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_back.add_argument("--no-model", action="store_true",
                         help="rules only, skip the ML model")
     p_back.set_defaults(func=cmd_backtest)
+
+    p_sim = sub.add_parser("simulate",
+                           help="replay the strategy on real history and "
+                                "print every simulated buy/sell")
+    common(p_sim)
+    p_sim.add_argument("--capital", type=float, default=1000.0,
+                       help="starting simulated capital in USD (default 1000)")
+    p_sim.add_argument("--trades-csv", default="simulation_trades.csv",
+                       metavar="CSV", help="write executed trades to this CSV "
+                                           "(default simulation_trades.csv)")
+    p_sim.set_defaults(func=cmd_simulate)
 
     p_report = sub.add_parser("report", help="write an HTML report with charts")
     common(p_report)
@@ -193,8 +374,9 @@ def build_parser() -> argparse.ArgumentParser:
                          help="append signals to this CSV (default signals.csv)")
     p_watch.add_argument("--trade", action="store_true",
                          help="paper-trade the signals (simulated money)")
-    p_watch.add_argument("--portfolio", default="paper_portfolio.json",
-                         help="paper portfolio state file")
+    p_watch.add_argument("--portfolio", default=None,
+                         help="paper portfolio state file "
+                              "(default paper_portfolio_<COIN>.json)")
     p_watch.add_argument("--report-out", default=None, metavar="HTML",
                          help="also regenerate an HTML report every candle")
     p_watch.set_defaults(func=cmd_watch)
