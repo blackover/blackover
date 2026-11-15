@@ -104,6 +104,43 @@ Prefer cron? Run one signal per invocation instead:
 2 0 * * *  cd /path/to/repo && python -m xrp_predictor signal --interval 1d --log signals.csv >> cron.log 2>&1
 ```
 
+## Automatic LIVE trading (real money — read this twice)
+
+The watch loop can also place **real market orders** on a real exchange,
+driven by the model's BUY/SELL signals. This is **off by default** and
+wrapped in safety rails:
+
+- the bot manages only a fixed **budget slice** (default **$100**), never
+  your whole account;
+- each single order is capped (default **$50**, `--max-usd`);
+- API keys come **only** from environment variables, never files or flags;
+- you must type `LIVE` at startup to confirm (or pass `--yes` for
+  unattended runs);
+- every order is appended to `live_state_<COIN>.json` and the run log.
+
+Setup:
+
+```bash
+pip install ccxt                      # exchange connector (100+ exchanges)
+export EXCHANGE_API_KEY="...your key..."
+export EXCHANGE_API_SECRET="...your secret..."
+
+python -m xrp_predictor watch --coin XRP --interval 1h --live \
+    --exchange binance --budget 100 --max-usd 50
+```
+
+**Before you do this:**
+
+1. Run `simulate` and paper `watch --trade` for **at least a few weeks** and
+   check in the logs whether the strategy actually makes money for your coin
+   and interval. In many market regimes it does not.
+2. Create a **dedicated API key with trade permission only** — never enable
+   withdrawals on a bot key — and ideally restrict it to your IP.
+3. Start with a budget you are fully prepared to lose. The model is a
+   statistical guess, not a promise; a string of losing trades is normal.
+
+The author takes no responsibility for losses; use entirely at your own risk.
+
 ## Log files (for reviewing and tuning the model)
 
 Every command writes to the `logs/` directory:

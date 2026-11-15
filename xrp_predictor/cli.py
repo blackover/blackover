@@ -250,12 +250,47 @@ def cmd_report(args) -> int:
 def cmd_watch(args) -> int:
     """Run forever: one prediction per candle (hourly/daily/...)."""
     log = _runlog(args)
+    if args.live and args.trade:
+        print("choose ONE of --trade (paper) or --live (real orders)",
+              file=sys.stderr)
+        return 2
+
+    live_trader = None
+    if args.live:
+        from .trader import LiveTrader, LiveTraderError
+        print("\n" + "!" * 68)
+        print("!!  LIVE TRADING MODE — this places REAL orders with REAL money.")
+        print(f"!!  Exchange: {args.exchange}   pair: {args.coin}/{args.quote}")
+        print(f"!!  Managed budget: ${args.budget:.2f}   "
+              f"max per order: ${args.max_usd:.2f}")
+        print("!!  The prediction model WILL be wrong regularly; you can lose")
+        print("!!  this entire budget. Paper-trade first (--trade).")
+        print("!" * 68)
+        if not args.yes:
+            try:
+                answer = input("Type LIVE to continue, anything else aborts: ")
+            except EOFError:
+                answer = ""
+            if answer.strip() != "LIVE":
+                print("aborted — nothing was traded. "
+                      "Use --trade for safe paper trading.")
+                return 1
+        try:
+            live_trader = LiveTrader(
+                coin=args.coin, exchange_id=args.exchange, quote=args.quote,
+                budget=args.budget, max_usd=args.max_usd, log=log)
+        except LiveTraderError as exc:
+            print(f"live trading setup failed: {exc}", file=sys.stderr)
+            log.error("live setup", exc)
+            return 1
+
     portfolio = (PaperPortfolio.load(args.portfolio, coin=args.coin,
                                      fee=args.fee)
                  if args.trade else None)
     seconds = interval_seconds(args.interval)
+    mode = "LIVE" if live_trader else ("paper" if portfolio else "signals only")
     print(f"watching {args.coin} every {args.interval} candle "
-          f"(paper trading: {'ON' if portfolio else 'off'}) — Ctrl+C to stop")
+          f"(trading: {mode}) — Ctrl+C to stop")
     while True:
         try:
             signal, ind = _live_signal(args)
@@ -263,6 +298,13 @@ def cmd_watch(args) -> int:
             log.signal(signal)
             if args.log:
                 _append_log(signal, args.log)
+            if live_trader is not None:
+                msg = live_trader.execute(signal)
+                print(msg)
+                print(f"live budget value: "
+                      f"${live_trader.value(signal.price):.2f} "
+                      f"(cash ${live_trader.cash:.2f} + "
+                      f"{live_trader.units:.6f} {args.coin})")
             if portfolio is not None:
                 before_units = portfolio.units
                 print(portfolio.apply_signal(signal))
@@ -374,6 +416,22 @@ def build_parser() -> argparse.ArgumentParser:
                          help="append signals to this CSV (default signals.csv)")
     p_watch.add_argument("--trade", action="store_true",
                          help="paper-trade the signals (simulated money)")
+    p_watch.add_argument("--live", action="store_true",
+                         help="place REAL orders on a real exchange "
+                              "(requires EXCHANGE_API_KEY/EXCHANGE_API_SECRET "
+                              "env vars; read the README first)")
+    p_watch.add_argument("--exchange", default="binance",
+                         help="ccxt exchange id for --live (default binance)")
+    p_watch.add_argument("--quote", default="USDT",
+                         help="quote currency for --live pairs (default USDT)")
+    p_watch.add_argument("--budget", type=float, default=100.0,
+                         help="total USD the live trader may manage "
+                              "(default 100)")
+    p_watch.add_argument("--max-usd", type=float, default=50.0,
+                         help="maximum USD per live order (default 50)")
+    p_watch.add_argument("--yes", action="store_true",
+                         help="skip the interactive LIVE confirmation "
+                              "(for running under nohup/systemd)")
     p_watch.add_argument("--portfolio", default=None,
                          help="paper portfolio state file "
                               "(default paper_portfolio_<COIN>.json)")

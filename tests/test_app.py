@@ -154,6 +154,73 @@ def test_runlog_writes_both_files():
         assert records[3]["error"]["type"] == "ValueError"
 
 
+def test_live_trader_with_fake_exchange():
+    from xrp_predictor.strategy import Signal
+    from xrp_predictor.trader import LiveTrader
+
+    class FakeExchange:
+        price = 2.0
+
+        def __init__(self):
+            self.markets = {"XRP/USDT": {}}
+            self.orders = []
+
+        def load_markets(self):
+            return self.markets
+
+        def amount_to_precision(self, symbol, amount):
+            return f"{amount:.4f}"
+
+        def create_order(self, symbol, order_type, side, amount):
+            assert order_type == "market"
+            self.orders.append((symbol, side, amount))
+            return {"id": f"o{len(self.orders)}", "filled": amount,
+                    "cost": amount * self.price}
+
+    def sig(action, price=2.0, coin="XRP"):
+        return Signal(time=pd.Timestamp("2026-11-15", tz="UTC"), price=price,
+                      action=action, score=0.5, confidence=50.0,
+                      prob_up=None, coin=coin)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        state = os.path.join(tmp, "live.json")
+        fake = FakeExchange()
+        tr = LiveTrader(coin="XRP", budget=100.0, max_usd=50.0,
+                        state_path=state, client=fake)
+
+        # BUY is capped at max_usd per order
+        msg = tr.execute(sig("BUY"))
+        assert "LIVE BUY" in msg and abs(tr.cash - 50.0) < 1e-6
+        assert fake.orders[-1][1] == "buy" and fake.orders[-1][2] == 25.0
+
+        # second buy uses the remaining budget slice
+        tr.execute(sig("BUY"))
+        assert tr.cash < 1e-6 and abs(tr.units - 50.0) < 1e-6
+
+        # below-minimum buy is skipped, not sent to the exchange
+        n_orders = len(fake.orders)
+        msg = tr.execute(sig("BUY"))
+        assert "no live buy" in msg and len(fake.orders) == n_orders
+
+        # wrong coin is never traded
+        msg = tr.execute(sig("BUY", coin="BTC"))
+        assert "skipped" in msg and len(fake.orders) == n_orders
+
+        # HOLD does nothing
+        assert "no live trade" in tr.execute(sig("HOLD"))
+
+        # SELL dumps the whole position
+        msg = tr.execute(sig("SELL"))
+        assert "LIVE SELL" in msg and tr.units == 0.0
+        assert abs(tr.cash - 100.0) < 1e-6  # fake exchange charges no fee
+
+        # state persisted and reloadable
+        tr2 = LiveTrader(coin="XRP", budget=999.0, max_usd=50.0,
+                         state_path=state, client=FakeExchange())
+        assert abs(tr2.cash - 100.0) < 1e-6   # budget from state, not arg
+        assert len(tr2.orders) == 3
+
+
 def test_cli_simulate_and_scan_offline():
     from xrp_predictor.cli import main
 

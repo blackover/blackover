@@ -10,3 +10,4 @@ paper_portfolio.json
 paper_portfolio_*.json
 simulation_trades.csv
 logs/
+live_state_*.json
