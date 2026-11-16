@@ -5,10 +5,21 @@ the default**; it also analyzes:
 
 - **crypto**: BTC, ETH, SOL, ADA, DOGE, LINK, LTC, DOT, AVAX (Binance →
   Kraken → CoinGecko, no API key)
-- **US stocks** *(optional)*: AAPL, MSFT, NVDA, TSLA, ... (Yahoo Finance,
-  Stooq fallback)
+- **US stocks** *(optional)*: AAPL, MSFT, NVDA, TSLA, ... (Yahoo Finance)
 - **Türkiye / Borsa Istanbul stocks** *(optional, priced in TRY)*: THYAO,
   ASELS, GARAN, AKBNK, ... (Yahoo Finance)
+
+**Verified against live data** on 2026-11-16 — see
+[`docs/real-data-check.md`](docs/real-data-check.md) for the real output.
+Kraken, CoinGecko, Yahoo Finance (US and Borsa Istanbul) and Google News
+(English and Turkish) all work. Two caveats found by that check:
+
+- **Binance refuses some regions** (HTTP 451). The app then falls back to
+  Kraken automatically after a few seconds. Whether Binance answers from
+  your location is untested.
+- **The Stooq backup for US daily prices does not work** — the site now
+  rejects automated clients. US stock data therefore depends on Yahoo
+  Finance alone.
 
 Every hour (or every day — you choose), it:
 
@@ -298,7 +309,7 @@ prices.
 |---|---|
 | `xrp_predictor/data.py` | coin catalog + crypto OHLCV (Binance / Kraken / CoinGecko / CSV) |
 | `xrp_predictor/assets.py` | symbol resolution: crypto / US stock / BIST stock |
-| `xrp_predictor/stocks.py` | stock OHLCV via Yahoo Finance (+ Stooq fallback) |
+| `xrp_predictor/stocks.py` | stock OHLCV via Yahoo Finance (Stooq backup currently rejected by the site) |
 | `xrp_predictor/settings.py` | optional markets + watchlists (settings.json) |
 | `xrp_predictor/news.py` | Google News headlines + EN/TR keyword sentiment |
 | `xrp_predictor/indicators.py` | RSI, MACD, EMA, Bollinger, Stochastic, ATR, OBV… |
