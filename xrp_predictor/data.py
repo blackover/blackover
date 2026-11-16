@@ -139,6 +139,10 @@ def fetch_coingecko(interval: str = "1h", limit: int = 720,
         "close": close.values,
         "volume": volume.values,
     }).dropna().reset_index(drop=True)
+    # open is the previous close, so widen high/low to keep candles
+    # consistent (low <= open/close <= high).
+    out["high"] = out[["open", "high", "close"]].max(axis=1)
+    out["low"] = out[["open", "low", "close"]].min(axis=1)
     return out.tail(limit).reset_index(drop=True)
 
 

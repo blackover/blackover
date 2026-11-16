@@ -25,9 +25,20 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) query-client/1.0"}
 
 # interval -> (yahoo interval, max lookback days Yahoo allows)
 YAHOO_INTERVALS = {"15m": ("15m", 59), "1h": ("60m", 729), "1d": ("1d", 3650)}
+# intraday candle length, used to fold Yahoo's trailing live-quote row
+YAHOO_BAR_SECONDS = {"15m": 15 * 60, "1h": 60 * 60}
 
 
-def parse_yahoo_chart(payload: dict) -> pd.DataFrame:
+def parse_yahoo_chart(payload: dict,
+                      bar_seconds: int | None = None) -> pd.DataFrame:
+    """Parse a Yahoo v8 chart payload.
+
+    While a market is open Yahoo appends an extra intraday row stamped with
+    the live quote time (e.g. 14:48:31, zero volume) after the candle that
+    is still forming (14:30).  When ``bar_seconds`` is given, such a trailing
+    row that falls inside the previous candle is folded into it so there is
+    exactly one row per candle.
+    """
     chart = payload.get("chart", {})
     if chart.get("error"):
         raise DataError(f"yahoo: {chart['error']}")
@@ -57,7 +68,17 @@ def parse_yahoo_chart(payload: dict) -> pd.DataFrame:
     if not rows:
         raise DataError("yahoo: no usable candles")
     df = pd.DataFrame(rows, columns=COLUMNS)
-    return df.drop_duplicates("time").sort_values("time").reset_index(drop=True)
+    df = df.drop_duplicates("time").sort_values("time").reset_index(drop=True)
+    if bar_seconds and len(df) >= 2:
+        prev, last = df.iloc[-2], df.iloc[-1]
+        if (last["time"] - prev["time"]).total_seconds() < bar_seconds:
+            i = df.index[-2]
+            df.loc[i, "high"] = max(prev["high"], last["high"])
+            df.loc[i, "low"] = min(prev["low"], last["low"])
+            df.loc[i, "close"] = last["close"]
+            df.loc[i, "volume"] = prev["volume"] + last["volume"]
+            df = df.iloc[:-1].reset_index(drop=True)
+    return df
 
 
 def fetch_yahoo(yahoo_symbol: str, interval: str = "1h",
@@ -75,7 +96,8 @@ def fetch_yahoo(yahoo_symbol: str, interval: str = "1h",
                 "events": "history"},
         headers=HEADERS, timeout=20)
     resp.raise_for_status()
-    return parse_yahoo_chart(resp.json()).tail(limit).reset_index(drop=True)
+    df = parse_yahoo_chart(resp.json(), YAHOO_BAR_SECONDS.get(interval))
+    return df.tail(limit).reset_index(drop=True)
 
 
 def parse_stooq(csv_text: str) -> pd.DataFrame:

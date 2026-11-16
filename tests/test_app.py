@@ -309,6 +309,27 @@ def test_stock_parsers():
     assert df["close"].iloc[-1] == 10.8
     assert str(df["time"].dt.tz) == "UTC"
 
+    # Shape seen on the real API while the market is open: the forming
+    # 14:30 candle is followed by a live-quote row (14:48:57, zero volume).
+    live = {"chart": {"result": [{
+        "timestamp": [1794601800, 1794839400, 1794840537],
+        "indicators": {"quote": [{
+            "open": [356.66, 355.81, 355.23],
+            "high": [356.67, 357.10, 357.50],
+            "low": [355.75, 353.79, 355.23],
+            "close": [356.40, 355.30, 355.23],
+            "volume": [4655398, 12347501, 0],
+        }]},
+    }], "error": None}}
+    assert len(parse_yahoo_chart(live)) == 3          # daily: untouched
+    merged = parse_yahoo_chart(live, bar_seconds=3600)
+    assert len(merged) == 2
+    last = merged.iloc[-1]
+    assert last["time"] == pd.Timestamp(1794839400, unit="s", tz="UTC")
+    assert last["open"] == 355.81 and last["close"] == 355.23
+    assert last["high"] == 357.50 and last["low"] == 353.79
+    assert last["volume"] == 12347501
+
     csv_text = ("Date,Open,High,Low,Close,Volume\n"
                 "2026-11-13,100,102,99,101,5000\n"
                 "2026-11-14,101,103,100,102.5,6000\n")
